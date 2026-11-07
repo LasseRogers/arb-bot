@@ -34,7 +34,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("csv", type=Path, help="gap file from recorder.py or history.py")
     parser.add_argument("--window", type=float, default=6, help="hours used for 'normal'")
     parser.add_argument("--entry", type=float, default=3, help="distance from normal to enter")
-    parser.add_argument("--fee", type=float, default=1.5, help="round-trip cost per trade, both legs")
+    parser.add_argument("--fee", type=float, default=1.5, help="round-trip fees per trade, both legs")
+    parser.add_argument(
+        "--slippage", type=float, default=0, help="round-trip price slippage per trade, both legs"
+    )
     return parser.parse_args()
 
 
@@ -78,11 +81,13 @@ def main() -> None:
         print("no trades")
         return
 
+    cost = args.fee + args.slippage
     out = pd.DataFrame([{**vars(t), "gross": t.gross} for t in trades])
-    out["net"] = out["gross"] - args.fee
+    out["net"] = out["gross"] - cost
     out["held"] = out["exit_time"] - out["entry_time"]
 
-    path = Path("data/backtests") / f"{args.csv.stem}__w{args.window:g}_e{args.entry:g}.csv"
+    name = f"{args.csv.stem}__w{args.window:g}_e{args.entry:g}_s{args.slippage:g}.csv"
+    path = Path("data/backtests") / name
     path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(path, index=False)
 
@@ -90,6 +95,7 @@ def main() -> None:
     print(f"winners       {(out['net'] > 0).sum()}")
     print(f"gross profit  {out['gross'].sum():+.2f}")
     print(f"fees          {-args.fee * len(out):+.2f}")
+    print(f"slippage      {-args.slippage * len(out):+.2f}")
     print(f"net profit    {out['net'].sum():+.2f}")
     print(f"worst trade   {out['net'].min():+.2f}")
     print(f"typical hold  {out['held'].median()}")
