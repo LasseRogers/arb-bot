@@ -9,6 +9,7 @@ import csv
 import re
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -51,9 +52,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def sample(a: str, b: str) -> dict[str, float | str]:
-    price_a = get_price(a)
-    price_b = get_price(b)
+def sample(a: str, b: str, pool: ThreadPoolExecutor) -> dict[str, float | str]:
+    # Fetch both legs concurrently so the two quotes are as close in time as possible.
+    future_a = pool.submit(get_price, a)
+    future_b = pool.submit(get_price, b)
+    price_a, price_b = future_a.result(), future_b.result()
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         a: price_a,
@@ -68,7 +71,7 @@ def main() -> None:
     output.parent.mkdir(exist_ok=True)
     is_new = not output.exists()
 
-    with output.open("a", newline="") as f:
+    with output.open("a", newline="") as f, ThreadPoolExecutor(max_workers=2) as pool:
         writer = csv.DictWriter(f, fieldnames=["timestamp", args.a, args.b, "gap"])
         if is_new:
             writer.writeheader()
@@ -76,7 +79,7 @@ def main() -> None:
         print(f"Writing to {output} every {args.interval}s. Ctrl+C to stop.")
         while True:
             try:
-                row = sample(args.a, args.b)
+                row = sample(args.a, args.b, pool)
             except requests.RequestException as exc:
                 print(f"skipped: {exc}")
             else:
