@@ -6,10 +6,14 @@ INFO_URL = "https://api.hyperliquid.xyz/info"
 TIMEOUT_S = 10
 
 
-def get_mid_prices(dex: str = "") -> dict[str, float]:
-    resp = requests.post(INFO_URL, json={"type": "allMids", "dex": dex}, timeout=TIMEOUT_S)
+def _post(payload: dict) -> list | dict:
+    resp = requests.post(INFO_URL, json=payload, timeout=TIMEOUT_S)
     resp.raise_for_status()
-    return {coin: float(px) for coin, px in resp.json().items()}
+    return resp.json()
+
+
+def get_mid_prices(dex: str = "") -> dict[str, float]:
+    return {coin: float(px) for coin, px in _post({"type": "allMids", "dex": dex}).items()}
 
 
 def get_mid_price(coin: str) -> float:
@@ -19,6 +23,14 @@ def get_mid_price(coin: str) -> float:
     if coin not in mids:
         raise KeyError(f"{coin} not listed on Hyperliquid")
     return mids[coin]
+
+
+def get_candles(coin: str, interval: str, start_ms: int, end_ms: int) -> list[dict]:
+    """OHLCV candles between two epoch-ms timestamps. At most 5000 per call."""
+    return _post({
+        "type": "candleSnapshot",
+        "req": {"coin": coin, "interval": interval, "startTime": start_ms, "endTime": end_ms},
+    })
 
 
 if __name__ == "__main__":
