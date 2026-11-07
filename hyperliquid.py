@@ -33,5 +33,14 @@ def get_candles(coin: str, interval: str, start_ms: int, end_ms: int) -> list[di
     })
 
 
+def get_book(coin: str) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+    """Order book as (bids, asks), each a list of (price, size), best first."""
+    bids, asks = _post({"type": "l2Book", "coin": coin})["levels"]
+    return (
+        [(float(lvl["px"]), float(lvl["sz"])) for lvl in bids],
+        [(float(lvl["px"]), float(lvl["sz"])) for lvl in asks],
+    )
+
+
 if __name__ == "__main__":
     print(f"BTC mid: {get_mid_price('BTC'):,.2f}")
