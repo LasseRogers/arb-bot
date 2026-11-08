@@ -5,3 +5,4 @@ __pycache__/
 data/
 .env
 charts/
+ctrader_api_dump.txt
