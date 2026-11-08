@@ -23,6 +23,17 @@ def get_mid_price(symbol: str) -> float:
     return (bid + ask) / 2
 
 
+def get_24h_quote_volume(symbol: str) -> float | None:
+    """24h traded value in the quote asset, or None if the symbol isn't listed."""
+    resp = requests.get(
+        f"{BASE_URL}/api/v3/ticker/24hr", params={"symbol": symbol}, timeout=TIMEOUT_S
+    )
+    if resp.status_code == 400:
+        return None
+    resp.raise_for_status()
+    return float(resp.json()["quoteVolume"])
+
+
 if __name__ == "__main__":
     bid, ask = get_book_ticker("BTCUSDT")
     print(f"BTC bid: {bid:,.2f}  ask: {ask:,.2f}  mid: {(bid + ask) / 2:,.2f}")

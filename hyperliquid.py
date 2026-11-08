@@ -83,5 +83,24 @@ def get_markets(dex: str = "") -> list[dict]:
     return markets
 
 
+def get_spot_markets() -> dict[str, dict]:
+    """USDC-quoted spot pairs keyed by base token name, with mid price and 24h volume."""
+    meta, ctxs = _post({"type": "spotMetaAndAssetCtxs"})
+    tokens = {t["index"]: t["name"] for t in meta["tokens"]}
+    ctx_by_pair = {c["coin"]: c for c in ctxs}
+    markets = {}
+    for pair in meta["universe"]:
+        base, quote = (tokens[i] for i in pair["tokens"])
+        ctx = ctx_by_pair.get(pair["name"])
+        if quote != "USDC" or ctx is None:
+            continue
+        markets[base] = {
+            "pair": pair["name"],
+            "mid": float(ctx.get("midPx") or ctx["markPx"]),
+            "volume": float(ctx["dayNtlVlm"]),
+        }
+    return markets
+
+
 if __name__ == "__main__":
     print(f"BTC mid: {get_mid_price('BTC'):,.2f}")
