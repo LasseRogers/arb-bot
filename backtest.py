@@ -6,6 +6,7 @@ One trade at a time, one unit per leg:
   exit   when the gap is back at normal, or earlier if a stop triggers:
            --stop      gap moved this far further against the trade
            --max-hold  trade has been open this many hours
+With --funding, hourly funding from data/funding/ is charged or credited per leg.
 """
 
 import argparse
@@ -13,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+
+from recorder import slug
 
 
 @dataclass
@@ -28,6 +31,11 @@ class Trade:
     def gross(self) -> float:
         move = self.exit_gap - self.entry_gap
         return -move if self.side == "short" else move
+
+    @property
+    def sign_a(self) -> int:
+        """+1 if long the first market, -1 if short it. The second leg is the opposite."""
+        return -1 if self.side == "short" else 1
 
     def adverse_move(self, gap: float) -> float:
         """How far the gap has moved against the trade since entry."""
@@ -47,6 +55,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--stop", type=float, help="close if the gap moves this far against the trade")
     parser.add_argument("--max-hold", type=float, help="close after this many hours")
+    parser.add_argument("--funding", action="store_true", help="include hourly funding per leg")
     return parser.parse_args()
 
 
@@ -97,6 +106,28 @@ def run(gap: pd.Series, normal: pd.Series, entry: float,
     return trades
 
 
+def load_funding(market: str) -> pd.Series:
+    path = Path("data/funding") / f"{slug(market)}.csv"
+    if not path.exists():
+        raise SystemExit(f"missing {path}: run funding.py for {market} first")
+    return pd.read_csv(path, parse_dates=["timestamp"], index_col="timestamp")["rate"]
+
+
+def funding_cash(trade: Trade, prices: pd.DataFrame, rates: dict[str, pd.Series]) -> float:
+    """Funding received (+) or paid (-) over the life of a trade, both legs."""
+    a, b = prices.columns[:2]
+    total = 0.0
+    for market, sign in ((a, trade.sign_a), (b, -trade.sign_a)):
+        r = rates[market]
+        hours = r[(r.index > trade.entry_time) & (r.index <= trade.exit_time)]
+        if hours.empty:
+            continue
+        px = prices[market].reindex(hours.index, method="ffill")
+        # Positive rate: longs (sign +1) pay, shorts (sign -1) receive.
+        total += float((-sign * hours * px).sum())
+    return total
+
+
 def fmt(value: float | None) -> str:
     return "none" if value is None else f"{value:g}"
 
@@ -113,12 +144,18 @@ def main() -> None:
 
     cost = args.fee + args.slippage
     out = pd.DataFrame([{**vars(t), "gross": t.gross} for t in trades])
-    out["net"] = out["gross"] - cost
+    out["funding"] = 0.0
+    if args.funding:
+        prices = df.drop(columns="gap")
+        rates = {m: load_funding(m) for m in prices.columns[:2]}
+        out["funding"] = [funding_cash(t, prices, rates) for t in trades]
+    out["net"] = out["gross"] - cost + out["funding"]
     out["held"] = out["exit_time"] - out["entry_time"]
 
     name = (
         f"{args.csv.stem}__w{args.window:g}_e{args.entry:g}"
-        f"_f{args.fee:g}_s{args.slippage:g}_st{fmt(args.stop)}_mh{fmt(args.max_hold)}.csv"
+        f"_f{args.fee:g}_s{args.slippage:g}_st{fmt(args.stop)}_mh{fmt(args.max_hold)}"
+        f"{'_fund' if args.funding else ''}.csv"
     )
     path = Path("data/backtests") / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +168,7 @@ def main() -> None:
     print(f"gross profit  {out['gross'].sum():+.2f}")
     print(f"fees          {-args.fee * len(out):+.2f}")
     print(f"slippage      {-args.slippage * len(out):+.2f}")
+    print(f"funding       {out['funding'].sum():+.2f}")
     print(f"net profit    {out['net'].sum():+.2f}")
     print(f"worst trade   {out['net'].min():+.2f}")
     print(f"typical hold  {out['held'].median()}")

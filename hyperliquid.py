@@ -42,5 +42,25 @@ def get_book(coin: str) -> tuple[list[tuple[float, float]], list[tuple[float, fl
     )
 
 
+def get_funding_history(coin: str, start_ms: int, end_ms: int) -> list[dict]:
+    """Hourly funding records between two epoch-ms timestamps, oldest first.
+
+    Positive fundingRate means longs pay shorts.
+    """
+    records: list[dict] = []
+    while start_ms < end_ms:
+        batch = _post(
+            {"type": "fundingHistory", "coin": coin, "startTime": start_ms, "endTime": end_ms}
+        )
+        if not batch:
+            break
+        records.extend(batch)
+        last = batch[-1]["time"]
+        if last <= start_ms:
+            break
+        start_ms = last + 1
+    return records
+
+
 if __name__ == "__main__":
     print(f"BTC mid: {get_mid_price('BTC'):,.2f}")
