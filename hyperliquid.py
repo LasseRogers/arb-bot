@@ -62,5 +62,26 @@ def get_funding_history(coin: str, start_ms: int, end_ms: int) -> list[dict]:
     return records
 
 
+def get_perp_dexs() -> list[str]:
+    """Names of builder-deployed perp dexes, e.g. ['xyz', 'flx', ...]."""
+    return [d["name"] for d in _post({"type": "perpDexs"}) if d]
+
+
+def get_markets(dex: str = "") -> list[dict]:
+    """Every market on a dex with its current funding, price and daily volume."""
+    meta, ctxs = _post({"type": "metaAndAssetCtxs", "dex": dex})
+    markets = []
+    for asset, ctx in zip(meta["universe"], ctxs):
+        if asset.get("isDelisted"):
+            continue
+        markets.append({
+            "coin": asset["name"],
+            "funding": float(ctx["funding"]),
+            "mark": float(ctx["markPx"]),
+            "volume": float(ctx["dayNtlVlm"]),
+        })
+    return markets
+
+
 if __name__ == "__main__":
     print(f"BTC mid: {get_mid_price('BTC'):,.2f}")
