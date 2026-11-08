@@ -86,7 +86,10 @@ def main() -> None:
     out["net"] = out["gross"] - cost
     out["held"] = out["exit_time"] - out["entry_time"]
 
-    name = f"{args.csv.stem}__w{args.window:g}_e{args.entry:g}_s{args.slippage:g}.csv"
+    name = (
+        f"{args.csv.stem}__w{args.window:g}_e{args.entry:g}"
+        f"_f{args.fee:g}_s{args.slippage:g}.csv"
+    )
     path = Path("data/backtests") / name
     path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(path, index=False)
