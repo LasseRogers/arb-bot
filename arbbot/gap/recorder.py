@@ -6,7 +6,6 @@ The gap is first minus second.
 
 import argparse
 import csv
-import re
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -15,8 +14,9 @@ from pathlib import Path
 
 import requests
 
-import binance
-import hyperliquid
+from arbbot.util import slug
+from arbbot.venues import binance
+from arbbot.venues import hyperliquid
 
 VENUES: dict[str, Callable[[str], float]] = {
     "hl": hyperliquid.get_mid_price,
@@ -36,10 +36,6 @@ def market(spec: str) -> str:
 def get_price(spec: str) -> float:
     venue, _, symbol = spec.partition(":")
     return VENUES[venue](symbol)
-
-
-def slug(spec: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", spec.lower()).strip("-")
 
 
 def parse_args() -> argparse.Namespace:

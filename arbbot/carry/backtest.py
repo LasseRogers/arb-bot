@@ -11,8 +11,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-import hyperliquid
-from recorder import slug
+from arbbot.venues import hyperliquid
+from arbbot.util import slug
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,7 +35,7 @@ def main() -> None:
     args = parse_args()
     path = Path("data/funding") / f"{slug('hl:' + args.coin)}.csv"
     if not path.exists():
-        raise SystemExit(f"missing {path}: run funding.py {args.coin} --days 180 first")
+        raise SystemExit(f"missing {path}: run python -m arbbot.carry.funding {args.coin} --days 180 first")
     rates = pd.read_csv(path, parse_dates=["timestamp"], index_col="timestamp")["rate"]
 
     prices = hourly_closes(args.coin, rates.index[0], rates.index[-1] + pd.Timedelta(hours=1))

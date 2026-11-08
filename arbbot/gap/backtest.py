@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from recorder import slug
+from arbbot.util import slug
 
 
 @dataclass
@@ -109,7 +109,7 @@ def run(gap: pd.Series, normal: pd.Series, entry: float,
 def load_funding(market: str) -> pd.Series:
     path = Path("data/funding") / f"{slug(market)}.csv"
     if not path.exists():
-        raise SystemExit(f"missing {path}: run funding.py for {market} first")
+        raise SystemExit(f"missing {path}: run python -m arbbot.carry.funding for {market} first")
     return pd.read_csv(path, parse_dates=["timestamp"], index_col="timestamp")["rate"]
 
 

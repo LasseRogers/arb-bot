@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pandas as pd
 
-import binance
-import hyperliquid
+from arbbot.venues import binance
+from arbbot.venues import hyperliquid
 
 PERP_MAKER = 0.00015
 HL_SPOT_MAKER = 0.0004

@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pandas as pd
 
-import hyperliquid
-from recorder import slug
+from arbbot.venues import hyperliquid
+from arbbot.util import slug
 
 HOURS_PER_YEAR = 24 * 365
 

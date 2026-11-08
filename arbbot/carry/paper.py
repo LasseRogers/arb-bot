@@ -15,8 +15,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import hyperliquid
-from recorder import slug
+from arbbot.venues import hyperliquid
+from arbbot.util import slug
 
 SPOT_MAKER = 0.0004
 PERP_MAKER = 0.00015

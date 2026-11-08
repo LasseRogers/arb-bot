@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pandas as pd
 
-import hyperliquid
-from recorder import slug
+from arbbot.venues import hyperliquid
+from arbbot.util import slug
 
 INTERVAL_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}
 MAX_CANDLES = 5000

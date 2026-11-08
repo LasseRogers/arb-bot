@@ -7,7 +7,7 @@ markets, so its cost is the sum. Figures are per one unit of the asset.
 
 import argparse
 
-import hyperliquid
+from arbbot.venues import hyperliquid
 
 
 def fill_price(levels: list[tuple[float, float]], size: float) -> float | None:
