@@ -120,5 +120,19 @@ def get_max_leverage(coin: str) -> int:
     return next(a["maxLeverage"] for a in universe if a["name"] == coin)
 
 
+def get_perp_universe() -> list[dict]:
+    """Main-dex perps including delisted ones: name, maxLeverage, isDelisted."""
+    return [{"name": a["name"], "maxLeverage": a["maxLeverage"], "isDelisted": a.get("isDelisted", False)}
+            for a in _post({"type": "meta"})["universe"]]
+
+
+def get_spot_pairs() -> dict[str, str]:
+    """Base token -> spot pair name usable for candles (e.g. "@107"), USDC-quoted pairs only."""
+    meta = _post({"type": "spotMeta"})
+    names = {t["index"]: t["name"] for t in meta["tokens"]}
+    return {names[base]: pair["name"] for pair in meta["universe"]
+            for base, quote in [pair["tokens"]] if names.get(quote) == "USDC"}
+
+
 if __name__ == "__main__":
     print(f"BTC mid: {get_mid_price('BTC'):,.2f}")
