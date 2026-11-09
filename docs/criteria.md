@@ -55,8 +55,8 @@ Rebalance when margin < $150, fees included. Hard fails regardless of funding:
 
 ## Clock
 
-Gold count starts at aab2ff5 (2026-11-09 21:19 UTC), clean paper files. Rule changes after this reset it.
-Reprice throttle and fast-move guard are rules: `Params` at that commit.
+Gold count starts at bfb24c2 (2026-11-09 21:22 UTC), clean paper files, size 1 oz (hedge minimum).
+Rule changes after this reset it. Reprice throttle and fast-move guard are rules: `Params` at that commit.
 
 ## Definitions
 
@@ -65,7 +65,10 @@ entry sign × (entry_gap − target_gap), exit sign × (exit_target − exit_gap
 $0.75 applies to each leg's mean separately. Closure exits are left out of the exit mean;
 they still count in net and worst trade.
 
-Request budget: total `requests` ≤ Hyperliquid notional traded in USD (coin entry + exit)
-over the run, or the rule can't run live. Hard fail.
+Request budget. Requests are places, modifies and cancels; volume is the coin leg, entry + exit.
+- Sustainability: total requests ≤ 50% of volume. Fail above 100%.
+- Path: `budget_peak` (max of requests − volume at any point) ≤ 5,000. Fail above 10,000.
+Paper undercounts (rejected post-only orders, retries); compare with `userRateLimit` once live.
+The HYPE carry runs on a separate sub-account so the budgets don't mix.
 
 Net per trade is the `net` column of gold_trades.csv; `stats["net"]` is display only.
