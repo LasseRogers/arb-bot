@@ -57,6 +57,37 @@ Before any new clock:
   stays, budgeted at taker fees. Margin < $90 and liquidation stay hard fails.
 - The 10%/yr pass is unchanged.
 
+## Carry walk-forward scan
+
+Fixed before any run. One primary configuration decides the gate; sensitivities
+(2-week lookback, top 1, top 3) are reported, never picked afterwards.
+
+| Setting | Value |
+| --- | --- |
+| Universe | HL perps with a USDC spot market on HL, wrapped names included |
+| Volume | 28-day median: perp ≥ $10M/day, spot ≥ $1M/day |
+| Listing | Funding history for the full lookback |
+| Lookback | 28 days of funding, ≥ 70% of hours positive |
+| Hold | 4 weeks, then re-pick |
+| Switch | Challenger must beat the incumbent's score by 5 points/yr |
+| Floor | Best score < 10%/yr: hold cash |
+| Coins | Top 2, equal weight |
+| Costs | Taker on every rotation and rebalance |
+
+Every filter as of the pick date, from data available then.
+
+Margin per coin: D = max(20%, 4 × trailing 28-day daily volatility);
+m = maintenance + (1 + maintenance) × D; excluded if m > 50%. Automated rebalance when price
+is D/2 above the last anchor. Score = trailing funding ÷ (1 + m), the return on total capital.
+
+History: everything available; 4-hour candles for price and highs where hourly don't reach.
+6–9 non-overlapping 8-week windows. Report eligible coins per window.
+
+Gate for a new paper clock: ≥ 2/3 of windows pass, no liquidation in any. Must beat both
+baselines: always HYPE, and equal weight across the universe.
+
+Auto-deleveraging is not modelled: windows with a market-wide crash are flagged as optimistic.
+
 ## Both
 
 - Evaluated independently, unless a shared cause (shared code, platform outage, ADL, fee change).

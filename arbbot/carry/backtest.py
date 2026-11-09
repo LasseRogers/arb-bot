@@ -9,7 +9,8 @@ judged by the same pass/fail rules as the paper test. Per hour:
     initial margin at max leverage) and against entry (or last rebalance) x 1.25
   - at each check (--check-every hours, as the paper test is run by hand): below the
     rebalance level, spot is sold and the same amount of perp bought back, and the
-    cash tops margin up to the deposit again, fees paid on both legs
+    cash tops margin up to the deposit again, taker fees paid on both legs (it happens
+    in a fast market)
 
 Spot and perp use the perp price, so hedge P&L is zero here; the paper test measures it.
 Checks fall on hours where (hour index + --phase) is a multiple of --check-every; with
@@ -25,7 +26,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from arbbot.carry.paper import PERP_MAKER, SPOT_MAKER
+from arbbot.fees import HL_PERP_MAKER as PERP_MAKER, HL_PERP_TAKER as PERP_TAKER
+from arbbot.fees import HL_SPOT_MAKER as SPOT_MAKER, HL_SPOT_TAKER as SPOT_TAKER
 from arbbot.util import slug
 from arbbot.venues import hyperliquid
 
@@ -134,9 +136,9 @@ def simulate(rates: pd.Series, px: pd.DataFrame, args: argparse.Namespace, mmr: 
             run.min_margin = min(run.min_margin, margin)
             if margin < args.rebalance_below:
                 sell = (args.margin - margin) / close
-                cost = sell * close * (SPOT_MAKER + PERP_MAKER)
+                cost = sell * close * (SPOT_TAKER + PERP_TAKER)
                 units -= sell
-                margin = args.margin - sell * close * PERP_MAKER
+                margin = args.margin - sell * close * PERP_TAKER
                 anchor = close
                 run.rebalances += 1
                 run.rebalance_cost += cost
