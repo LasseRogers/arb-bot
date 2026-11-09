@@ -11,7 +11,13 @@ The exit rests from the moment the trade is hedged, targeting normal (less exit_
 and follows the rolling normal and hedge quote until it fills. A coin fill is hedged
 hedge_delay_s later at the hedge quote current at that time. Gap = coin mid - hedge mid.
 
-Resting orders come off when quotes go stale or the hedge venue is about to close.
+Repricing is throttled to stay inside Hyperliquid's request budget (one request per
+USDC traded): at most one amend per reprice_min_s, and only when the price moves a
+tick near the touch or reprice_far further out. Every place, amend and cancel counts
+in stats["requests"].
+
+Resting orders come off when quotes go stale, the hedge venue is about to close, or
+the hedge moves fast (a jump, or a wide spread); no new orders until it calms down.
 Open trades are closed at the quote before a weekend or holiday closure.
 """
 
@@ -19,6 +25,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 
@@ -38,6 +45,13 @@ class Params:
     entry_timeout_s: float = 60
     hedge_delay_s: float = 0.5
     stale_after_s: float = 15.0
+    reprice_min_s: float = 2.0
+    reprice_near: float = 0.5  # within this of the touch, follow tick by tick
+    reprice_far: float = 1.0
+    jump: float = 1.5  # hedge mid move within jump_window_s that counts as fast
+    jump_window_s: float = 3.0
+    max_hedge_spread: float = 0.30
+    calm_after_s: float = 10.0
     tick: float = 0.1
     coin_maker: float = 0.00015
     coin_taker: float = 0.00045
@@ -64,6 +78,7 @@ class Order:
     purpose: str  # "entry" or "exit"
     placed: datetime
     target_gap: float
+    amended: datetime | None = None
 
 
 @dataclass
@@ -147,9 +162,11 @@ class Strategy:
     trade: Trade | None = None
     hedge_due: datetime | None = None
     last_step: datetime | None = None
+    fast_until: datetime | None = None
+    hedge_marks: deque = field(default_factory=deque)  # (time, mid), not persisted
     samples: list[tuple[datetime, float]] = field(default_factory=list)
     stats: dict = field(default_factory=lambda: {
-        "placed": 0, "filled": 0, "missed": 0, "cancelled": 0, "closed": 0, "net": 0.0})
+        "placed": 0, "filled": 0, "missed": 0, "cancelled": 0, "closed": 0, "requests": 0, "net": 0.0})
 
     # --- normal --------------------------------------------------------------
 
@@ -213,6 +230,13 @@ class Strategy:
         if stale:
             return
 
+        why_fast = self._fast_market(now, hedge)
+        if why_fast:
+            self.fast_until = now + timedelta(seconds=p.calm_after_s)
+            if self.state in RESTING:
+                self._pull_order(now, f"fast market: {why_fast}", events)
+        calm = self.fast_until is None or now >= self.fast_until
+
         if self.state in ("open", "exit_resting") and sched.must_flatten(now):
             self._flatten(now, coin, hedge, events)
             return
@@ -224,11 +248,12 @@ class Strategy:
             return
 
         if self.state == "flat":
-            if sched.entries_allowed(now) and abs(gap - normal) >= p.entry:
+            if calm and sched.entries_allowed(now) and abs(gap - normal) >= p.entry:
                 direction = "long" if gap < normal else "short"
                 self.order = self.entry_order(direction, normal, coin, hedge, now)
                 self.state = "entry_resting"
                 self.stats["placed"] += 1
+                self._request()
                 events.append(Event(now, "entry order",
                                     f"{self.order.side} coin at {self.order.price:.2f} for gap "
                                     f"{self.order.target_gap:+.2f} (gap {gap:+.2f}, normal {normal:+.2f})"))
@@ -249,15 +274,17 @@ class Strategy:
             elif (now - self.order.placed).total_seconds() > p.entry_timeout_s:
                 self.state, self.order = "flat", None
                 self.stats["missed"] += 1
+                self._request()
                 events.append(Event(now, "entry missed", "order never traded"))
             else:
                 direction = "long" if self.order.side == "buy" else "short"
-                self.order = self._reprice(self.entry_order(direction, normal, coin, hedge, now))
+                self._reprice(self.entry_order(direction, normal, coin, hedge, now), coin, now)
 
         elif self.state == "open":
-            if sched.quoting_allowed(now):
+            if calm and sched.quoting_allowed(now):
                 self.order = self.exit_order(normal, coin, hedge, now)
                 self.state = "exit_resting"
+                self._request()
                 events.append(Event(now, "exit order", f"{self.order.side} coin at {self.order.price:.2f} "
                                                        f"for gap {self.order.target_gap:+.2f}"))
 
@@ -271,16 +298,42 @@ class Strategy:
                 events.append(Event(now, "exit filled", f"{self.order.side} coin {self.order.price:.2f}"))
                 self.order = None
             else:
-                self.order = self._reprice(self.exit_order(normal, coin, hedge, now))
+                self._reprice(self.exit_order(normal, coin, hedge, now), coin, now)
 
     # --- helpers ---------------------------------------------------------------
 
-    def _reprice(self, new: Order) -> Order:
-        """Follow the hedge quote but keep the original placement time for the timeout."""
-        new.placed = self.order.placed
-        return new
+    def _request(self) -> None:
+        self.stats["requests"] = self.stats.get("requests", 0) + 1
+
+    def _reprice(self, new: Order, coin: Quote, now: datetime) -> None:
+        """Amend the resting order if it moved enough and the last amend is old enough.
+
+        Keeps the original placement time for the entry timeout.
+        """
+        p, old = self.params, self.order
+        last = old.amended or old.placed
+        if (now - last).total_seconds() < p.reprice_min_s:
+            return
+        from_touch = new.price - coin.ask if new.side == "sell" else coin.bid - new.price
+        step = p.tick if from_touch <= p.reprice_near else p.reprice_far
+        if abs(new.price - old.price) < step - 1e-9:
+            return
+        new.placed, new.amended = old.placed, now
+        self.order = new
+        self._request()
+
+    def _fast_market(self, now: datetime, hedge: Quote) -> str:
+        p, marks = self.params, self.hedge_marks
+        marks.append((now, hedge.mid))
+        while marks and (now - marks[0][0]).total_seconds() > p.jump_window_s:
+            marks.popleft()
+        if hedge.ask - hedge.bid > p.max_hedge_spread:
+            return f"hedge spread {hedge.ask - hedge.bid:.2f}"
+        move = max(abs(hedge.mid - m) for _, m in marks)
+        return f"hedge moved {move:.2f}" if move >= p.jump else ""
 
     def _pull_order(self, now: datetime, why: str, events: list[Event]) -> None:
+        self._request()
         if self.state == "entry_resting":
             self.state, self.order = "flat", None
             self.stats["cancelled"] += 1
@@ -316,6 +369,8 @@ class Strategy:
         t.coin_fees += t.coin_exit * self.params.coin_taker
         t.hedge_exit = hedge.ask if t.direction == "long" else hedge.bid
         t.exit_reason = "closure"
+        if self.order:
+            self._request()
         self.order = None
         self._close(now, events)
 

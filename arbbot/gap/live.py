@@ -3,7 +3,7 @@
 Trading rules live in arbbot.gap.strategy, shared with the replay backtest. This
 module only wires it to live data:
   - streams the coin from Hyperliquid and the hedge from cTrader
-  - builds the hedge venue's session schedule from cTrader, refreshed daily
+  - builds the hedge venue's session schedule and swap rates from cTrader, refreshed daily
   - seeds the rolling normal from recent 5-minute history
   - records every quote update per venue, plus a daily schedule snapshot, to data/ticks/
   - persists strategy state to data/paper/gold_state.json, so a restart keeps open trades
@@ -120,13 +120,16 @@ async def keep_schedule_fresh(client, account_id: int, symbol_id: int, strat: St
             continue
         try:
             symbol = await client.symbols.get_by_id(account_id, symbol_id)
-            strat.schedule = build_schedule(symbol, today)
+            schedule = build_schedule(symbol, today)
+            swap_long, swap_short = swap_per_unit(symbol)
         except Exception as e:  # keep trading on yesterday's schedule, retry next check
             print(f"  schedule refresh failed ({e!r}), keeping the old one")
             continue
-        snapshot_schedule(strat.schedule, pair, today)
+        strat.schedule = schedule
+        strat.params = replace(strat.params, swap_long=swap_long, swap_short=swap_short)
+        snapshot_schedule(schedule, pair, today)
         built = today
-        print(f"  schedule refreshed for {today}")
+        print(f"  schedule and swap refreshed for {today}: long {swap_long:+.4f}, short {swap_short:+.4f}")
 
 
 # --- funding -------------------------------------------------------------------
@@ -334,7 +337,7 @@ async def loop(args: argparse.Namespace, strat: Strategy, hl: dict, ct: dict, ti
                 window = ("entries on" if sched.entries_allowed(now)
                           else "quoting only" if sched.quoting_allowed(now) else "closed")
                 print(f"{now:%H:%M:%S}  gap {coin.mid - hedge.mid:+.2f}  normal {normal_txt}  "
-                      f"[{strat.state}, {window}]  quote age {args.hl} {(now - coin.at).total_seconds():.1f}s, "
+                      f"[{strat.state}, {window}]  requests {strat.stats['requests']}  quote age {args.hl} {(now - coin.at).total_seconds():.1f}s, "
                       f"{args.ct} {(now - hedge.at).total_seconds():.1f}s")
                 last_print = mono
             await anyio.sleep(args.interval)
@@ -357,7 +360,8 @@ def main() -> None:
         pass
     s = strat.stats
     print(f"\nstopped [{strat.state}]. entry orders {s['placed']}, filled {s['filled']}, "
-          f"missed {s['missed']}, cancelled {s['cancelled']}; closed {s['closed']}, net {s['net']:+.2f}")
+          f"missed {s['missed']}, cancelled {s['cancelled']}; closed {s['closed']}, net {s['net']:+.2f}, "
+          f"requests {s['requests']}")
 
 
 if __name__ == "__main__":

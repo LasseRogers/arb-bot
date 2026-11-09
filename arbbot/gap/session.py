@@ -73,10 +73,10 @@ class Schedule:
                    for i, (_, end) in enumerate(self.sessions))
 
     def rollovers(self, a: datetime, b: datetime) -> int:
-        """Swap periods charged between a and b: one per session close, triple on the triple day."""
+        """Swap periods charged between a and b: one per trading day closed, triple on the triple day."""
         zone = ZoneInfo(self.tz)
-        return sum(3 if end.astimezone(zone).weekday() == self.triple_weekday else 1
-                   for _, end in self.sessions if a < end <= b)
+        days = {end.astimezone(zone).date() for _, end in self.sessions if a < end <= b}
+        return sum(3 if d.weekday() == self.triple_weekday else 1 for d in days)
 
     def to_dict(self) -> dict:
         return {

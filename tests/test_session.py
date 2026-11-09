@@ -100,3 +100,8 @@ def test_from_trading_hours():
 
 def test_dict_round_trip():
     assert Schedule.from_dict(SCHED.to_dict()).sessions == SCHED.sessions
+
+
+def test_holiday_split_does_not_add_a_rollover():
+    s = Schedule(subtract(SCHED.sessions, (ny(10, 12), ny(10, 13))))
+    assert s.rollovers(ny(10, 10), ny(11, 10)) == 1

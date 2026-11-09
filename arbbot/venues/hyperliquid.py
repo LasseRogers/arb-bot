@@ -103,10 +103,6 @@ def get_spot_markets() -> dict[str, dict]:
     return markets
 
 
-if __name__ == "__main__":
-    print(f"BTC mid: {get_mid_price('BTC'):,.2f}")
-
-
 def price_tick(coin: str, price: float) -> float:
     """Smallest valid price step for a main-dex perp near `price`.
 
@@ -116,3 +112,7 @@ def price_tick(coin: str, price: float) -> float:
     sz_decimals = next(a["szDecimals"] for a in universe if a["name"] == coin)
     significant = 10.0 ** (math.floor(math.log10(price)) - 4)
     return max(significant, 10.0 ** -(6 - sz_decimals))
+
+
+if __name__ == "__main__":
+    print(f"BTC mid: {get_mid_price('BTC'):,.2f}")

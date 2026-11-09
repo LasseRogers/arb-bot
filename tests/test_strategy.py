@@ -170,8 +170,8 @@ def test_exit_follows_normal():
     t += timedelta(seconds=1)
     step(s, t, (4000.9, 4001.1))
     before = s.order.price
-    reseed(s, t + timedelta(seconds=1), NORMAL + 1)
-    t += timedelta(seconds=1)
+    t += timedelta(seconds=3)
+    reseed(s, t, NORMAL + 1)
     step(s, t, (4000.9, 4001.1))
     assert s.order.price == pytest.approx(before + 1)
 
@@ -180,7 +180,7 @@ def test_entry_follows_the_book_without_crossing():
     s, t = seeded(), MON_10
     step(s, t, (4001.0, 4001.2))
     assert s.order.price == pytest.approx(4001.1)
-    t += timedelta(seconds=1)
+    t += timedelta(seconds=3)
     step(s, t, (4001.3, 4001.5))  # coin ticks up, gap still far enough from normal
     assert s.state == "entry_resting"
     assert s.order.price == pytest.approx(4001.4)
@@ -307,3 +307,72 @@ def test_old_state_without_last_step_loads():
     d = seeded().to_dict()
     del d["last_step"]
     assert Strategy.from_dict(d).last_step is None
+
+
+# --- request budget ------------------------------------------------------------
+
+def test_reprice_throttled_in_time():
+    s, t = seeded(), MON_10
+    step(s, t, (4001.0, 4001.2))
+    step(s, t + timedelta(seconds=1), (4001.3, 4001.5))
+    assert s.order.price == pytest.approx(4001.1)  # too soon
+    step(s, t + timedelta(seconds=2), (4001.3, 4001.5))
+    assert s.order.price == pytest.approx(4001.4)
+
+
+def test_far_order_ignores_small_moves():
+    s = seeded()
+    t = open_long(s, MON_10)
+    t += timedelta(seconds=1)
+    step(s, t, (4000.9, 4001.1))
+    before = s.order.price  # sell at ~4005.1, about 4 above the touch
+    t += timedelta(seconds=3)
+    step(s, t, (4000.9, 4001.1), hedge=(4000.5, 4000.6))  # target up 0.5
+    assert s.order.price == before
+    t += timedelta(seconds=3)
+    step(s, t, (4000.9, 4001.1), hedge=(4001.0, 4001.1))  # target up 1.0
+    assert s.order.price == pytest.approx(before + 1)
+
+
+def test_requests_counted():
+    s = seeded()
+    t = open_long(s, MON_10)  # place
+    t += timedelta(seconds=1)
+    step(s, t, (4000.9, 4001.1))  # exit place
+    step(s, t + timedelta(seconds=3), (4000.9, 4001.1), hedge=(4001.0, 4001.1))  # amend
+    assert s.stats["requests"] == 3
+
+
+# --- fast market -----------------------------------------------------------------
+
+def test_hedge_jump_pulls_exit_until_calm():
+    s = seeded()
+    t = open_long(s, MON_10)
+    t += timedelta(seconds=1)
+    step(s, t, (4000.9, 4001.1))
+    assert s.state == "exit_resting"
+    t += timedelta(seconds=1)
+    ev = step(s, t, (4000.9, 4001.1), hedge=(4002.0, 4002.1))  # +2 in a second
+    assert s.state == "open" and "fast market" in ev[-1].detail
+    t += timedelta(seconds=5)
+    step(s, t, (4000.9, 4001.1), hedge=(4002.0, 4002.1))
+    assert s.state == "open"  # still cooling down
+    t += timedelta(seconds=6)
+    step(s, t, (4000.9, 4001.1), hedge=(4002.0, 4002.1))
+    assert s.state == "exit_resting"
+
+
+def test_wide_hedge_spread_blocks_entries():
+    s, t = seeded(), MON_10
+    step(s, t, (4001.0, 4001.2), hedge=(3999.8, 4000.3))
+    assert s.state == "flat"
+
+
+def test_flatten_ignores_fast_market():
+    t = FRI_CLOSE - timedelta(hours=3)
+    s = seeded(t)
+    open_long(s, t)
+    late = FRI_CLOSE - timedelta(minutes=59)
+    reseed(s, late)
+    ev = step(s, late, (4001.0, 4001.2), hedge=(3999.5, 4000.5))
+    assert [e for e in ev if e.name == "closed"]
