@@ -88,6 +88,13 @@ baselines: always HYPE, and equal weight across the universe.
 
 Auto-deleveraging is not modelled: windows with a market-wide crash are flagged as optimistic.
 
+Result 2026-11-09 (69c640d): 0 pass, 2 extend, 7 fail of 9; mean +3.1%/yr vs always-HYPE +7.1%,
+equal weight +4.7%. Sensitivities (14d, top 1, top 3) don't pass either. Carry dropped: default
+funding (~11%/yr on notional) can't reach 10% on capital, even at zero margin.
+
+Revisit (restart 2 of 2) only if the top eligible score is ≥ 13%/yr on two consecutive monthly
+runs of `python -m arbbot.carry.walkforward`.
+
 ## Both
 
 - Evaluated independently, unless a shared cause (shared code, platform outage, ADL, fee change).
