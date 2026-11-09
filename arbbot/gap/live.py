@@ -7,6 +7,8 @@ A pending entry is cancelled if the gap stops meeting the entry rule before it
 fills. A pending exit is cancelled, keeping the trade open, if the gap moves
 away from normal again; it is only re-quoted while the exit condition holds.
 Normal is the median gap over the previous --window hours.
+Both venues are streamed: cTrader pushes spot updates, Hyperliquid pushes its
+order book over a websocket, so every check uses the latest quotes.
 """
 
 import argparse
@@ -18,12 +20,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import anyio
-import anyio.to_thread
 import pandas as pd
 from ctrader_api_client.events.types import SpotEvent
 
 from arbbot.gap import history
-from arbbot.venues import ctrader, hyperliquid
+from arbbot.venues import ctrader, hyperliquid_ws
 
 SAMPLE_EVERY = timedelta(minutes=5)
 MIN_SAMPLES = 12
@@ -86,7 +87,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window", type=float, default=6, help="hours used for 'normal'")
     parser.add_argument("--entry", type=float, default=3, help="distance from normal to start")
     parser.add_argument("--order-timeout", type=float, default=60, help="seconds a resting order waits")
-    parser.add_argument("--interval", type=float, default=5, help="seconds between checks")
+    parser.add_argument("--interval", type=float, default=0.5, help="seconds between checks")
+    parser.add_argument("--print-every", type=float, default=5, help="seconds between status lines")
     return parser.parse_args()
 
 
@@ -146,100 +148,116 @@ async def run(args: argparse.Namespace, samples: list[tuple[datetime, float]], s
             ct["at"] = time.monotonic()
 
         await client.market_data.subscribe_spots(account_id, [symbol_id])
-        print(f"paper trading {args.hl} vs {args.ct}: start at normal ±{args.entry:g}, "
-              f"orders wait {args.order_timeout:g}s. Ctrl+C to stop.\n")
+        hl = {"bid": None, "ask": None, "at": 0.0}
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(hyperliquid_ws.stream_top_of_book, args.hl, hl)
+            await trade_loop(args, samples, stats, window, ct, hl)
 
-        state, order, trade = "flat", None, None
-        last_sample = samples[-1][0] if samples else datetime.min.replace(tzinfo=timezone.utc)
 
-        while True:
-            now = datetime.now(timezone.utc)
-            mono = time.monotonic()
-            stamp = now.strftime("%H:%M:%S")
+async def trade_loop(args: argparse.Namespace, samples: list[tuple[datetime, float]], stats: dict,
+                     window: timedelta, ct: dict, hl: dict) -> None:
+    print(f"paper trading {args.hl} vs {args.ct}: start at normal ±{args.entry:g}, "
+          f"orders wait {args.order_timeout:g}s. Ctrl+C to stop.\n")
 
-            if ct["bid"] is None or mono - ct["at"] > STALE_AFTER_S:
-                if state == "entry_pending":
-                    state = "flat"
-                    stats["missed"] += 1
-                    event(now, "entry cancelled", f"no fresh {args.ct} price")
-                print(f"{stamp}  no fresh {args.ct} price (market closed?), waiting [{state}]")
-                await anyio.sleep(args.interval)
-                continue
+    state, order, trade = "flat", None, None
+    last_sample = samples[-1][0] if samples else datetime.min.replace(tzinfo=timezone.utc)
+    last_print = 0.0
 
-            bids, asks = await anyio.to_thread.run_sync(hyperliquid.get_book, args.hl)
-            hl_bid, hl_ask = bids[0][0], asks[0][0]
-            ct_bid, ct_ask = ct["bid"], ct["ask"]
-            gap = (hl_bid + hl_ask) / 2 - (ct_bid + ct_ask) / 2
-            normal = normal_gap(samples, now, window)
-            if now - last_sample >= SAMPLE_EVERY:
-                samples.append((now, gap))
-                last_sample = now
-            if normal is None:
-                print(f"{stamp}  gap {gap:+.2f}  (not enough history for normal yet)")
-                await anyio.sleep(args.interval)
-                continue
+    while True:
+        now = datetime.now(timezone.utc)
+        mono = time.monotonic()
+        stamp = now.strftime("%H:%M:%S")
 
-            if state == "flat":
-                if entries_allowed(now) and abs(gap - normal) >= args.entry:
-                    side = "sell" if gap > normal else "buy"
-                    order = Order(side, hl_ask if side == "sell" else hl_bid, mono, gap)
-                    state = "entry_pending"
-                    stats["placed"] += 1
-                    event(now, "entry order", f"{side} {args.hl} at {order.price:.2f} "
-                                              f"(gap {gap:+.2f}, normal {normal:+.2f})")
-
-            elif state == "entry_pending":
-                if order.filled_by(hl_bid, hl_ask):
-                    direction = "long" if order.side == "buy" else "short"
-                    ct_px = ct_bid if direction == "long" else ct_ask
-                    trade = Trade(direction, iso(now), order.price, ct_px, order.signal_gap)
-                    state = "open"
-                    stats["filled"] += 1
-                    event(now, "entry filled", f"{order.side} {args.hl} {order.price:.2f}, "
-                                               f"{'sell' if direction == 'long' else 'buy'} {args.ct} {ct_px:.2f} "
-                                               f"(gap at signal {order.signal_gap:+.2f}, at fill {trade.entry_gap:+.2f})")
-                elif abs(gap - normal) < args.entry:
-                    state = "flat"
-                    stats["cancelled"] += 1
-                    event(now, "entry cancelled", f"gap {gap:+.2f} no longer {args.entry:g} from normal "
-                                                  f"{normal:+.2f} before the order filled")
-                elif mono - order.placed > args.order_timeout:
-                    state = "flat"
-                    stats["missed"] += 1
-                    event(now, "entry missed", f"{order.side} {args.hl} at {order.price:.2f} never traded")
-
-            elif state == "open":
-                back = gap >= normal if trade.direction == "long" else gap <= normal
-                if back:
-                    side = "sell" if trade.direction == "long" else "buy"
-                    order = Order(side, hl_ask if side == "sell" else hl_bid, mono, gap)
-                    state = "exit_pending"
-                    event(now, "exit order", f"{side} {args.hl} at {order.price:.2f}")
-
-            elif state == "exit_pending":
-                still_back = gap >= normal if trade.direction == "long" else gap <= normal
-                if order.filled_by(hl_bid, hl_ask):
-                    trade.hl_exit = order.price
-                    trade.ct_exit = ct_ask if trade.direction == "long" else ct_bid
-                    trade.exit_signal_gap = order.signal_gap
-                    trade.closed = iso(now)
-                    net = trade.gross() - trade.fees()
-                    append_csv(TRADES, asdict(trade) | {
-                        "entry_gap": round(trade.entry_gap, 4), "exit_gap": round(trade.exit_gap, 4),
-                        "gross": round(trade.gross(), 4), "fees": round(trade.fees(), 4), "net": round(net, 4)})
-                    stats["closed"] += 1
-                    stats["net"] += net
-                    state = "flat"
-                    event(now, "closed", f"{trade.direction}: gap {trade.entry_gap:+.2f} -> {trade.exit_gap:+.2f}, "
-                                         f"gross {trade.gross():+.2f}, fees {trade.fees():.2f}, net {net:+.2f}")
-                elif not still_back:
-                    state = "open"
-                    event(now, "exit cancelled", f"gap {gap:+.2f} moved away from normal {normal:+.2f}; keeping trade open")
-                elif mono - order.placed > args.order_timeout:
-                    order = Order(order.side, hl_ask if order.side == "sell" else hl_bid, mono, gap)
-
-            print(f"{stamp}  gap {gap:+.2f}  normal {normal:+.2f}  [{state}]")
+        stale = [name for name, q in ((args.ct, ct), (args.hl, hl))
+                 if q["bid"] is None or mono - q["at"] > STALE_AFTER_S]
+        if stale:
+            if state == "entry_pending":
+                state = "flat"
+                stats["cancelled"] += 1
+                event(now, "entry cancelled", f"no fresh price for {', '.join(stale)}")
+            if mono - last_print >= args.print_every:
+                print(f"{stamp}  no fresh price for {', '.join(stale)} (market closed?), waiting [{state}]")
+                last_print = mono
             await anyio.sleep(args.interval)
+            continue
+
+        hl_bid, hl_ask = hl["bid"], hl["ask"]
+        ct_bid, ct_ask = ct["bid"], ct["ask"]
+        gap = (hl_bid + hl_ask) / 2 - (ct_bid + ct_ask) / 2
+        normal = normal_gap(samples, now, window)
+        if now - last_sample >= SAMPLE_EVERY:
+            samples.append((now, gap))
+            last_sample = now
+        if normal is None:
+            if mono - last_print >= args.print_every:
+                print(f"{stamp}  gap {gap:+.2f}  (not enough history for normal yet)")
+                last_print = mono
+            await anyio.sleep(args.interval)
+            continue
+
+        if state == "flat":
+            if entries_allowed(now) and abs(gap - normal) >= args.entry:
+                side = "sell" if gap > normal else "buy"
+                order = Order(side, hl_ask if side == "sell" else hl_bid, mono, gap)
+                state = "entry_pending"
+                stats["placed"] += 1
+                event(now, "entry order", f"{side} {args.hl} at {order.price:.2f} "
+                                          f"(gap {gap:+.2f}, normal {normal:+.2f})")
+
+        elif state == "entry_pending":
+            if order.filled_by(hl_bid, hl_ask):
+                direction = "long" if order.side == "buy" else "short"
+                ct_px = ct_bid if direction == "long" else ct_ask
+                trade = Trade(direction, iso(now), order.price, ct_px, order.signal_gap)
+                state = "open"
+                stats["filled"] += 1
+                event(now, "entry filled", f"{order.side} {args.hl} {order.price:.2f}, "
+                                           f"{'sell' if direction == 'long' else 'buy'} {args.ct} {ct_px:.2f} "
+                                           f"(gap at signal {order.signal_gap:+.2f}, at fill {trade.entry_gap:+.2f})")
+            elif abs(gap - normal) < args.entry:
+                state = "flat"
+                stats["cancelled"] += 1
+                event(now, "entry cancelled", f"gap {gap:+.2f} no longer {args.entry:g} from normal "
+                                              f"{normal:+.2f} before the order filled")
+            elif mono - order.placed > args.order_timeout:
+                state = "flat"
+                stats["missed"] += 1
+                event(now, "entry missed", f"{order.side} {args.hl} at {order.price:.2f} never traded")
+
+        elif state == "open":
+            back = gap >= normal if trade.direction == "long" else gap <= normal
+            if back:
+                side = "sell" if trade.direction == "long" else "buy"
+                order = Order(side, hl_ask if side == "sell" else hl_bid, mono, gap)
+                state = "exit_pending"
+                event(now, "exit order", f"{side} {args.hl} at {order.price:.2f}")
+
+        elif state == "exit_pending":
+            still_back = gap >= normal if trade.direction == "long" else gap <= normal
+            if order.filled_by(hl_bid, hl_ask):
+                trade.hl_exit = order.price
+                trade.ct_exit = ct_ask if trade.direction == "long" else ct_bid
+                trade.exit_signal_gap = order.signal_gap
+                trade.closed = iso(now)
+                net = trade.gross() - trade.fees()
+                append_csv(TRADES, asdict(trade) | {
+                    "entry_gap": round(trade.entry_gap, 4), "exit_gap": round(trade.exit_gap, 4),
+                    "gross": round(trade.gross(), 4), "fees": round(trade.fees(), 4), "net": round(net, 4)})
+                stats["closed"] += 1
+                stats["net"] += net
+                state = "flat"
+                event(now, "closed", f"{trade.direction}: gap {trade.entry_gap:+.2f} -> {trade.exit_gap:+.2f}, "
+                                     f"gross {trade.gross():+.2f}, fees {trade.fees():.2f}, net {net:+.2f}")
+            elif not still_back:
+                state = "open"
+                event(now, "exit cancelled", f"gap {gap:+.2f} moved away from normal {normal:+.2f}; keeping trade open")
+            elif mono - order.placed > args.order_timeout:
+                order = Order(order.side, hl_ask if order.side == "sell" else hl_bid, mono, gap)
+
+        if mono - last_print >= args.print_every:
+            print(f"{stamp}  gap {gap:+.2f}  normal {normal:+.2f}  [{state}]")
+            last_print = mono
+        await anyio.sleep(args.interval)
 
 
 def main() -> None:
