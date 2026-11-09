@@ -331,6 +331,17 @@ def test_too_aggressive_order_pulled_back_at_once():
     assert s.order.price == pytest.approx(before + 0.3)
 
 
+def test_far_order_ignores_one_adverse_tick():
+    s = seeded()
+    t = open_long(s, MON_10)
+    t += timedelta(seconds=1)
+    step(s, t, (4000.9, 4001.1))
+    before, requests = s.order.price, s.stats["requests"]  # ~4 above the touch
+    t += timedelta(seconds=0.5)
+    step(s, t, (4000.9, 4001.1), hedge=(4000.1, 4000.2))  # too aggressive by one tick
+    assert s.order.price == before and s.stats["requests"] == requests
+
+
 def test_less_aggressive_move_waits():
     s = seeded()
     t = open_long(s, MON_10)

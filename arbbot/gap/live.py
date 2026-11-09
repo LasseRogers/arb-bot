@@ -13,6 +13,7 @@ module only wires it to live data:
 import argparse
 import csv
 import json
+import subprocess
 import time
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
@@ -89,6 +90,13 @@ def save_strategy(strat: Strategy) -> None:
     tmp = STATE.with_suffix(".tmp")
     tmp.write_text(json.dumps(strat.to_dict()))
     tmp.replace(STATE)
+
+
+def code_version() -> str:
+    """Short git hash of the running code, with -dirty if the tree has local changes."""
+    def git(*a: str) -> str:
+        return subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()
+    return (git("rev-parse", "--short", "HEAD") or "unknown") + ("-dirty" if git("status", "--porcelain", "--", "arbbot") else "")
 
 
 # --- hedge venue ---------------------------------------------------------------
@@ -299,7 +307,10 @@ async def run(args: argparse.Namespace, strat: Strategy) -> None:
 
 async def loop(args: argparse.Namespace, strat: Strategy, hl: dict, ct: dict, ticks: TickRecorder) -> None:
     last_print = last_save = 0.0
-    print(f"paper trading {args.hl} vs {args.ct}, entry ±{strat.params.entry:g}, "
+    version = code_version()
+    append_csv(EVENTS, {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "event": "start",
+                        "detail": f"code {version}, params {strat.params}"})
+    print(f"paper trading {args.hl} vs {args.ct} on {version}, entry ±{strat.params.entry:g}, "
           f"tick {strat.params.tick:g}. Ctrl+C to stop.\n")
     try:
         while True:

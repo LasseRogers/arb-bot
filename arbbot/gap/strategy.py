@@ -12,9 +12,10 @@ and follows the rolling normal and hedge quote until it fills. A coin fill is he
 hedge_delay_s later at the hedge quote current at that time. Gap = coin mid - hedge mid.
 
 Repricing is throttled to stay inside Hyperliquid's request budget (one request per
-USDC traded), but only in the safe direction. An order left more aggressive than its
-new target is pulled back at once; otherwise at most one amend per reprice_min_s, and
-only when the price moves a tick near the touch or reprice_far further out. Every place, amend (one modify) and
+USDC traded), except where it costs us. An order left more aggressive than its new
+target is pulled back at once: by a tick when it rests near the touch, by far_tolerance
+or more when it is further out and can't be hit soon. Moves in the safe direction wait
+reprice_min_s between amends and a tick near the touch, reprice_far further out. Every place, amend (one modify) and
 cancel counts in stats["requests"]; coin fills add to stats["volume"] at Params.size,
 and stats["budget_peak"] keeps the worst requests - volume seen, for the buffer check.
 
@@ -51,6 +52,7 @@ class Params:
     reprice_min_s: float = 2.0
     reprice_near: float = 0.5  # within this of the touch, follow tick by tick
     reprice_far: float = 1.0
+    far_tolerance: float = 0.30  # too aggressive by this much, far from the touch: amend at once
     jump: float = 1.5  # hedge mid move within jump_window_s that counts as fast
     jump_window_s: float = 3.0
     max_hedge_spread: float = 0.30
@@ -325,13 +327,17 @@ class Strategy:
         moved = abs(new.price - old.price)
         if moved < p.tick - 1e-9:
             return
+        # Distance of the resting order, since that is what can be hit.
+        near = (old.price - coin.ask if old.side == "sell" else coin.bid - old.price) <= p.reprice_near
         too_aggressive = new.price < old.price if new.side == "buy" else new.price > old.price
-        if not too_aggressive:
+        if too_aggressive:
+            if not near and moved < p.far_tolerance - 1e-9:
+                return
+        else:
             last = old.amended or old.placed
             if (now - last).total_seconds() < p.reprice_min_s:
                 return
-            from_touch = new.price - coin.ask if new.side == "sell" else coin.bid - new.price
-            if moved < (p.tick if from_touch <= p.reprice_near else p.reprice_far) - 1e-9:
+            if moved < (p.tick if near else p.reprice_far) - 1e-9:
                 return
         new.placed, new.amended = old.placed, now
         self.order = new
