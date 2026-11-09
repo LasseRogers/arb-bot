@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from ctrader_api_client import ClientConfig, CTraderClient
 from ctrader_api_client.auth.credentials import AccountCredentials
 from ctrader_api_client.enums import TrendbarPeriod
+from ctrader_api_client.exceptions import APIError
 
 DEMO_HOST = "demo.ctraderapi.com"
 LIVE_HOST = "live.ctraderapi.com"
@@ -55,6 +56,49 @@ async def find_symbol_id(client: CTraderClient, account_id: int, name: str) -> i
         if info.name == name:
             return info.symbol_id
     raise KeyError(f"{name} not found on this account")
+
+
+PERIODS = {
+    "1m": TrendbarPeriod.M1,
+    "5m": TrendbarPeriod.M5,
+    "15m": TrendbarPeriod.M15,
+    "1h": TrendbarPeriod.H1,
+}
+REQUEST_SPAN = timedelta(days=2)
+REQUEST_PAUSE_S = 0.5
+RATE_LIMIT_RETRIES = 5
+
+
+async def _trendbars_with_retry(client, account_id, symbol_id, period, start, end):
+    """Historical data is rate limited; back off and retry when told to slow down."""
+    for attempt in range(RATE_LIMIT_RETRIES):
+        try:
+            return await client.market_data.get_trendbars(account_id, symbol_id, period, start, end)
+        except APIError as exc:
+            if not exc.is_rate_limited() or attempt == RATE_LIMIT_RETRIES - 1:
+                raise
+            await anyio.sleep(2 ** attempt)
+
+
+async def fetch_closes(symbol: str, start: datetime, end: datetime, interval: str) -> dict[datetime, float]:
+    """Close of every bar between start and end, keyed by bar open time (UTC)."""
+    async with connect() as (client, account_id):
+        symbol_id = await find_symbol_id(client, account_id, symbol)
+        closes: dict[datetime, float] = {}
+        t = start
+        while t < end:
+            bars = await _trendbars_with_retry(
+                client, account_id, symbol_id, PERIODS[interval], t, min(t + REQUEST_SPAN, end)
+            )
+            for bar in bars:
+                closes[bar.timestamp] = float(bar.close)
+            t += REQUEST_SPAN
+            await anyio.sleep(REQUEST_PAUSE_S)
+        return closes
+
+
+def get_closes(symbol: str, start: datetime, end: datetime, interval: str) -> dict[datetime, float]:
+    return anyio.run(fetch_closes, symbol, start, end, interval)
 
 
 async def main() -> None:
