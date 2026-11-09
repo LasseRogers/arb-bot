@@ -376,3 +376,13 @@ def test_flatten_ignores_fast_market():
     reseed(s, late)
     ev = step(s, late, (4001.0, 4001.2), hedge=(3999.5, 4000.5))
     assert [e for e in ev if e.name == "closed"]
+
+
+def test_volume_and_budget_peak():
+    s = seeded()
+    t = open_long(s, MON_10)
+    assert s.stats["budget_peak"] == 1  # the placement, before any volume
+    assert s.stats["volume"] == pytest.approx(4001.1)
+    t += timedelta(seconds=1)
+    step(s, t, (4000.9, 4001.1))
+    assert s.stats["budget_peak"] == 1  # 2 requests against ~4001 traded

@@ -337,7 +337,7 @@ async def loop(args: argparse.Namespace, strat: Strategy, hl: dict, ct: dict, ti
                 window = ("entries on" if sched.entries_allowed(now)
                           else "quoting only" if sched.quoting_allowed(now) else "closed")
                 print(f"{now:%H:%M:%S}  gap {coin.mid - hedge.mid:+.2f}  normal {normal_txt}  "
-                      f"[{strat.state}, {window}]  requests {strat.stats['requests']}  quote age {args.hl} {(now - coin.at).total_seconds():.1f}s, "
+                      f"[{strat.state}, {window}]  req {strat.stats['requests']}/vol {strat.stats['volume']:.0f}  quote age {args.hl} {(now - coin.at).total_seconds():.1f}s, "
                       f"{args.ct} {(now - hedge.at).total_seconds():.1f}s")
                 last_print = mono
             await anyio.sleep(args.interval)
@@ -361,7 +361,7 @@ def main() -> None:
     s = strat.stats
     print(f"\nstopped [{strat.state}]. entry orders {s['placed']}, filled {s['filled']}, "
           f"missed {s['missed']}, cancelled {s['cancelled']}; closed {s['closed']}, net {s['net']:+.2f}, "
-          f"requests {s['requests']}")
+          f"requests {s['requests']}, volume {s['volume']:.0f}, budget peak {s['budget_peak']:.0f}")
 
 
 if __name__ == "__main__":

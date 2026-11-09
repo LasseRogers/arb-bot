@@ -13,8 +13,9 @@ hedge_delay_s later at the hedge quote current at that time. Gap = coin mid - he
 
 Repricing is throttled to stay inside Hyperliquid's request budget (one request per
 USDC traded): at most one amend per reprice_min_s, and only when the price moves a
-tick near the touch or reprice_far further out. Every place, amend and cancel counts
-in stats["requests"].
+tick near the touch or reprice_far further out. Every place, amend (one modify) and
+cancel counts in stats["requests"]; coin fills add to stats["volume"] at Params.size,
+and stats["budget_peak"] keeps the worst requests - volume seen, for the buffer check.
 
 Resting orders come off when quotes go stale, the hedge venue is about to close, or
 the hedge moves fast (a jump, or a wide spread); no new orders until it calms down.
@@ -37,6 +38,7 @@ HEDGING = ("entry_hedging", "exit_hedging")
 
 @dataclass(frozen=True)
 class Params:
+    size: float = 1.0  # coin units per trade; the hedge minimum is 0.01 lot = 1 oz
     entry: float = 3.0
     exit_offset: float = 0.0  # take profit this far short of normal
     window_h: float = 6.0
@@ -166,7 +168,8 @@ class Strategy:
     hedge_marks: deque = field(default_factory=deque)  # (time, mid), not persisted
     samples: list[tuple[datetime, float]] = field(default_factory=list)
     stats: dict = field(default_factory=lambda: {
-        "placed": 0, "filled": 0, "missed": 0, "cancelled": 0, "closed": 0, "requests": 0, "net": 0.0})
+        "placed": 0, "filled": 0, "missed": 0, "cancelled": 0, "closed": 0, "requests": 0,
+        "volume": 0.0, "budget_peak": 0.0, "net": 0.0})
 
     # --- normal --------------------------------------------------------------
 
@@ -263,6 +266,7 @@ class Strategy:
                 direction = "long" if self.order.side == "buy" else "short"
                 self.trade = Trade(direction, now, self.order.target_gap, self.order.price,
                                    coin_fees=self.order.price * p.coin_maker)
+                self._traded(self.order.price)
                 self.state, self.hedge_due = "entry_hedging", now + timedelta(seconds=p.hedge_delay_s)
                 self.stats["filled"] += 1
                 events.append(Event(now, "entry filled", f"{self.order.side} coin {self.order.price:.2f}"))
@@ -294,6 +298,7 @@ class Strategy:
                 self.trade.exit_target = self.order.target_gap
                 self.trade.coin_fees += self.order.price * p.coin_maker
                 self.trade.exit_reason = "normal"
+                self._traded(self.order.price)
                 self.state, self.hedge_due = "exit_hedging", now + timedelta(seconds=p.hedge_delay_s)
                 events.append(Event(now, "exit filled", f"{self.order.side} coin {self.order.price:.2f}"))
                 self.order = None
@@ -303,7 +308,12 @@ class Strategy:
     # --- helpers ---------------------------------------------------------------
 
     def _request(self) -> None:
-        self.stats["requests"] = self.stats.get("requests", 0) + 1
+        st = self.stats
+        st["requests"] = st.get("requests", 0) + 1
+        st["budget_peak"] = max(st.get("budget_peak", 0.0), st["requests"] - st.get("volume", 0.0))
+
+    def _traded(self, price: float) -> None:
+        self.stats["volume"] = self.stats.get("volume", 0.0) + price * self.params.size
 
     def _reprice(self, new: Order, coin: Quote, now: datetime) -> None:
         """Amend the resting order if it moved enough and the last amend is old enough.
@@ -369,6 +379,7 @@ class Strategy:
         t.coin_fees += t.coin_exit * self.params.coin_taker
         t.hedge_exit = hedge.ask if t.direction == "long" else hedge.bid
         t.exit_reason = "closure"
+        self._traded(t.coin_exit)
         if self.order:
             self._request()
         self.order = None
