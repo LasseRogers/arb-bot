@@ -55,7 +55,17 @@ Rebalance when margin < $150, fees included. Hard fails regardless of funding:
 
 ## Clock
 
-Gold count starts at 5504dc6 (2026-11-09 21:09 UTC). Rule changes after this reset it.
+Gold count starts at aab2ff5 (2026-11-09 21:19 UTC), clean paper files. Rule changes after this reset it.
+Reprice throttle and fast-move guard are rules: `Params` at that commit.
 
-Adverse selection per leg: sign × (entry_gap − target_gap) on entry, sign × (exit_target − exit_gap)
-on exit; sign +1 long, −1 short. Positive is a cost. Logged as entry_slippage / exit_slippage.
+## Definitions
+
+Adverse selection per leg, sign +1 long, −1 short, positive is a cost:
+entry sign × (entry_gap − target_gap), exit sign × (exit_target − exit_gap).
+$0.75 applies to each leg's mean separately. Closure exits are left out of the exit mean;
+they still count in net and worst trade.
+
+Request budget: total `requests` ≤ Hyperliquid notional traded in USD (coin entry + exit)
+over the run, or the rule can't run live. Hard fail.
+
+Net per trade is the `net` column of gold_trades.csv; `stats["net"]` is display only.
