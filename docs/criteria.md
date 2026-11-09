@@ -47,6 +47,16 @@ Rebalance when margin < $150, fees included. Hard fails regardless of funding:
 - hourly perp high ≥ entry × 1.25 between checks without a rebalance
 - > 3 rebalances, or rebalance cost > 25% of funding
 
+Stopped 2026-11-09, restart 1 of 2. The frozen design can't pass: backtest cdf77a7 gives
+6–8%/yr on $1,300 at 10.6% funding, and daily manual checks get liquidated on 2026-05-21.
+The paper position stays open as a rehearsal (basis, funding vs model) and doesn't count.
+
+Before any new clock:
+- Gate: the walk-forward backtest passes ≥ 2 of 3 windows with no hard fail.
+- With automated, price-triggered rebalancing the count limit goes; cost ≤ 25% of funding
+  stays, budgeted at taker fees. Margin < $90 and liquidation stay hard fails.
+- The 10%/yr pass is unchanged.
+
 ## Both
 
 - Evaluated independently, unless a shared cause (shared code, platform outage, ADL, fee change).

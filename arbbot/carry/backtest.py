@@ -12,6 +12,8 @@ judged by the same pass/fail rules as the paper test. Per hour:
     cash tops margin up to the deposit again, fees paid on both legs
 
 Spot and perp use the perp price, so hedge P&L is zero here; the paper test measures it.
+Checks fall on hours where (hour index + --phase) is a multiple of --check-every; with
+--all-phases every phase is run and each window reports how the verdicts spread.
 
 Caveat: the coin was picked for its past funding, so windows before the pick flatter it.
 """
@@ -38,7 +40,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rebalance-below", type=float, default=150)
     parser.add_argument("--weeks", type=int, default=8, help="window length")
     parser.add_argument("--check-every", type=int, default=24,
-                        help="hours between manual checks, where margin is read and rebalanced")
+                        help="hours between checks, where margin is read and rebalanced")
+    parser.add_argument("--phase", type=int, default=0, help="hour offset of the checks")
+    parser.add_argument("--all-phases", action="store_true", help="run every check phase")
+    parser.add_argument("--automated", action="store_true",
+                        help="rebalancing is automated: no limit on the count, only on cost")
     parser.add_argument("--exit-below", type=float, default=None,
                         help="optional: step out when trailing 72h funding falls below this %%/yr")
     parser.add_argument("--enter-above", type=float, default=None,
@@ -49,6 +55,7 @@ def parse_args() -> argparse.Namespace:
 @dataclass
 class Run:
     hourly: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))  # net cash per hour
+    funding_hourly: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
     funding: float = 0.0
     gross_funding: float = 0.0
     fees: float = 0.0
@@ -74,6 +81,7 @@ def simulate(rates: pd.Series, px: pd.DataFrame, args: argparse.Namespace, mmr: 
     run = Run()
     trailing = rates.rolling(72, min_periods=72).mean() * HOURS_PER_YEAR * 100
     cash: dict[pd.Timestamp, float] = {}
+    funding: dict[pd.Timestamp, float] = {}
     units = margin = mark = anchor = 0.0  # anchor: price at entry or last rebalance
     holding = False
 
@@ -115,13 +123,14 @@ def simulate(rates: pd.Series, px: pd.DataFrame, args: argparse.Namespace, mmr: 
             anchor = math.inf  # count each breach once until the next rebalance
 
         received = units * close * rate
+        funding[ts] = received
         run.funding += received
         run.gross_funding += max(received, 0.0)
         net += received
         margin += received + units * (mark - close)
         mark = close
 
-        if i % args.check_every == 0:
+        if (i + args.phase) % args.check_every == 0:
             run.min_margin = min(run.min_margin, margin)
             if margin < args.rebalance_below:
                 sell = (args.margin - margin) / close
@@ -141,6 +150,7 @@ def simulate(rates: pd.Series, px: pd.DataFrame, args: argparse.Namespace, mmr: 
         last = rates.index[-1]
         cash[last] -= leave(px.at[last, "close"])
     run.hourly = pd.Series(cash).sort_index()
+    run.funding_hourly = pd.Series(funding, dtype=float).sort_index()
     return run
 
 
@@ -149,7 +159,7 @@ def verdict(run: Run, args: argparse.Namespace) -> tuple[str, list[str]]:
     net = run.hourly.sum()
     yearly = net / put_in * 365 / (args.weeks * 7) * 100
     weekly = run.hourly.resample("W").sum()
-    worst_hours = -run.hourly.nsmallest(5).clip(upper=0).sum()
+    worst_hours = -run.funding_hourly.nsmallest(5).clip(upper=0).sum()
     fails = []
     if run.liquidated:
         fails.append(f"liquidated {run.liquidated}")
@@ -157,7 +167,7 @@ def verdict(run: Run, args: argparse.Namespace) -> tuple[str, list[str]]:
         fails.append(f"margin {run.min_margin:.0f} < 90")
     if run.high_breaches:
         fails.append(f"high ≥ entry × 1.25 ({run.high_breaches}x)")
-    if run.rebalances > 3:
+    if run.rebalances > 3 and not args.automated:
         fails.append(f"{run.rebalances} rebalances")
     if run.funding > 0 and run.rebalance_cost > 0.25 * run.funding:
         fails.append("rebalance cost > 25% of funding")
@@ -193,12 +203,31 @@ def main() -> None:
           f"${args.rebalance_below:,.0f}, maintenance margin {mmr:.1%}, {args.weeks}-week windows")
     if args.exit_below is not None:
         print(f"exit below {args.exit_below:g}%/yr, re-enter above {args.enter_above}%/yr (trailing 72h)")
+    windows, start = [], rates.index[0]
+    while start + span <= rates.index[-1] + pd.Timedelta(hours=1):
+        windows.append((start, rates[(rates.index >= start) & (rates.index < start + span)]))
+        start += span
+
+    if args.all_phases:
+        print(f"\nall {args.check_every} check phases per window")
+        print(f"{'window':<23} {'pass':>4} {'ext':>4} {'fail':>4} {'liq':>4} {'worst mgn':>9} {'median %/yr':>11}")
+        for start, window in windows:
+            verdicts, liquidations, margins, yearly = [], 0, [], []
+            for phase in range(args.check_every):
+                run = simulate(window, px, argparse.Namespace(**{**vars(args), "phase": phase}), mmr)
+                verdicts.append(verdict(run, args)[0])
+                liquidations += bool(run.liquidated)
+                margins.append(run.min_margin)
+                yearly.append(run.hourly.sum() / put_in * 365 / (args.weeks * 7) * 100)
+            print(f"{start:%Y-%m-%d} – {(start + span):%m-%d}  {verdicts.count('PASS'):>4} "
+                  f"{verdicts.count('EXTEND'):>4} {verdicts.count('FAIL'):>4} {liquidations:>4} "
+                  f"{min(margins):>9.0f} {pd.Series(yearly).median():>+11.1f}")
+        return
+
     print(f"\n{'window':<23} {'funding':>8} {'fees':>6} {'net':>7} {'%/yr':>6} {'+wk':>4} {'worst wk':>8} "
           f"{'min mgn':>7} {'rebal':>5} {'out h':>5}  verdict")
-
-    start, results = rates.index[0], []
-    while start + span <= rates.index[-1] + pd.Timedelta(hours=1):
-        window = rates[(rates.index >= start) & (rates.index < start + span)]
+    results = []
+    for start, window in windows:
         run = simulate(window, px, args, mmr)
         net = run.hourly.sum()
         weekly = run.hourly.resample("W").sum()
@@ -208,7 +237,6 @@ def main() -> None:
               f"{net / put_in * 365 / (args.weeks * 7) * 100:>+6.1f} {(weekly > 0).sum():>2}/{len(weekly):<2} "
               f"{weekly.min():>+8.2f} {run.min_margin:>7.0f} {run.rebalances:>5} {run.hours_out:>5}  "
               f"{result}{': ' + '; '.join(why) if why else ''}")
-        start += span
 
     print(f"\n{results.count('PASS')} pass, {results.count('EXTEND')} extend, {results.count('FAIL')} fail "
           f"of {len(results)} windows")
