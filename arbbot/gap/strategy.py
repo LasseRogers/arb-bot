@@ -29,7 +29,7 @@ class Params:
     sample_every_s: float = 300
     entry_timeout_s: float = 60
     hedge_delay_s: float = 0.5
-    stale_after_s: float = 5.0
+    stale_after_s: float = 15.0
     tick: float = 0.1
     coin_maker: float = 0.00015
     coin_taker: float = 0.00045

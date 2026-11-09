@@ -1,81 +1,38 @@
 """Paper-trade the gap strategy on live quotes. No real orders are placed.
 
-Entries and exits on the Hyperliquid coin are simulated as resting maker orders,
-counted as filled only once the market trades at or through their price. The
-cTrader leg is filled at its live quote the moment the coin leg fills.
-A pending entry is cancelled if the gap stops meeting the entry rule before it
-fills. A pending exit is cancelled, keeping the trade open, if the gap moves
-away from normal again; it is only re-quoted while the exit condition holds.
-Normal is the median gap over the previous --window hours.
-Both venues are streamed: cTrader pushes spot updates, Hyperliquid pushes its
-order book over a websocket, so every check uses the latest quotes.
+Trading rules live in arbbot.gap.strategy, shared with the replay backtest. This
+module only wires it to live data:
+  - streams the coin from Hyperliquid and the hedge from cTrader
+  - seeds the rolling normal from recent 5-minute history
+  - records every top-of-book change to data/ticks/ for replay
+  - persists strategy state to data/paper/gold_state.json, so a restart keeps open trades
+  - logs events and closed trades (with Hyperliquid funding) to data/paper/
 """
 
 import argparse
 import csv
-import statistics
+import json
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import anyio
+import anyio.to_thread
 import pandas as pd
 from ctrader_api_client.events.types import SpotEvent
 
 from arbbot.gap import history
-from arbbot.venues import ctrader, hyperliquid_ws
+from arbbot.gap.strategy import Params, Quote, Strategy, Trade
+from arbbot.venues import ctrader, hyperliquid, hyperliquid_ws
 
-SAMPLE_EVERY = timedelta(minutes=5)
-MIN_SAMPLES = 12
-STALE_AFTER_S = 120
-HL_MAKER = 0.00015
-CT_COMMISSION = 30 / 1_000_000
-TRADES = Path("data/paper/gold_trades.csv")
-EVENTS = Path("data/paper/gold_events.csv")
-
-
-@dataclass
-class Order:
-    side: str  # "buy" or "sell" on the Hyperliquid coin
-    price: float
-    placed: float  # time.monotonic() when placed
-    signal_gap: float  # mid gap when the order was placed
-
-    def filled_by(self, bid: float, ask: float) -> bool:
-        """Count a fill only once the market has traded at or through our price."""
-        if self.side == "buy":
-            return ask <= self.price or bid < self.price
-        return bid >= self.price or ask > self.price
-
-
-@dataclass
-class Trade:
-    direction: str  # "long": long the coin, short cTrader. "short": the reverse.
-    opened: str
-    hl_entry: float
-    ct_entry: float
-    signal_gap: float
-    closed: str = ""
-    hl_exit: float = 0.0
-    ct_exit: float = 0.0
-    exit_signal_gap: float = 0.0
-
-    @property
-    def entry_gap(self) -> float:
-        return self.hl_entry - self.ct_entry
-
-    @property
-    def exit_gap(self) -> float:
-        return self.hl_exit - self.ct_exit
-
-    def gross(self) -> float:
-        s = 1 if self.direction == "long" else -1
-        return s * (self.hl_exit - self.hl_entry) - s * (self.ct_exit - self.ct_entry)
-
-    def fees(self) -> float:
-        return ((self.hl_entry + self.hl_exit) * HL_MAKER
-                + (self.ct_entry + self.ct_exit) * CT_COMMISSION)
+PAPER = Path("data/paper")
+STATE = PAPER / "gold_state.json"
+TRADES = PAPER / "gold_trades.csv"
+EVENTS = PAPER / "gold_events.csv"
+TICKS = Path("data/ticks")
+SAVE_EVERY_S = 60
+FLUSH_EVERY_S = 5
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,16 +41,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--hl", default="PAXG", help="Hyperliquid coin")
     parser.add_argument("--ct", default="XAUUSD", help="cTrader symbol")
-    parser.add_argument("--window", type=float, default=6, help="hours used for 'normal'")
-    parser.add_argument("--entry", type=float, default=3, help="distance from normal to start")
-    parser.add_argument("--order-timeout", type=float, default=60, help="seconds a resting order waits")
-    parser.add_argument("--interval", type=float, default=0.5, help="seconds between checks")
+    parser.add_argument("--interval", type=float, default=0.5, help="seconds between strategy steps")
     parser.add_argument("--print-every", type=float, default=5, help="seconds between status lines")
     return parser.parse_args()
-
-
-def iso(t: datetime) -> str:
-    return t.isoformat(timespec="seconds")
 
 
 def append_csv(path: Path, row: dict) -> None:
@@ -106,36 +56,121 @@ def append_csv(path: Path, row: dict) -> None:
         writer.writerow(row)
 
 
-def event(now: datetime, name: str, detail: str) -> None:
-    append_csv(EVENTS, {"time": iso(now), "event": name, "detail": detail})
-    print(f"  ** {name}: {detail}")
-
-
-def entries_allowed(now: datetime) -> bool:
-    """No new trades near cTrader's nightly break (21:30-23:05 UTC) or on Friday evening."""
-    minutes = now.hour * 60 + now.minute
-    if 21 * 60 + 30 <= minutes < 23 * 60 + 5:
-        return False
-    return not (now.weekday() == 4 and now.hour >= 20)
-
-
-def seed_samples(hl_coin: str, ct_symbol: str) -> list[tuple[datetime, float]]:
-    a = history.fetch_closes(f"hl:{hl_coin}", 3, "5m")
-    b = history.fetch_closes(f"ctrader:{ct_symbol}", 3, "5m")
+def seed_samples(hl_coin: str, ct_symbol: str, window_h: float) -> list[tuple[datetime, float]]:
+    a = history.fetch_closes(f"hl:{hl_coin}", max(window_h / 24 * 2, 3), "5m")
+    b = history.fetch_closes(f"ctrader:{ct_symbol}", max(window_h / 24 * 2, 3), "5m")
     df = pd.concat([a, b], axis=1, join="inner")
     gap = df.iloc[:, 0] - df.iloc[:, 1]
     return [(ts.to_pydatetime(), float(g)) for ts, g in gap.items()]
 
 
-def normal_gap(samples: list[tuple[datetime, float]], now: datetime, window: timedelta) -> float | None:
-    recent = [g for ts, g in samples if ts >= now - window]
-    return statistics.median(recent) if len(recent) >= MIN_SAMPLES else None
+def load_strategy(params: Params, samples: list[tuple[datetime, float]]) -> Strategy:
+    """Resume a saved state if there is one. Resting orders don't survive a restart."""
+    if not STATE.exists():
+        strat = Strategy(params=params)
+    else:
+        strat = Strategy.from_dict(json.loads(STATE.read_text()), params)
+        if strat.state == "entry_resting":
+            strat.state, strat.order = "flat", None
+        elif strat.state == "exit_resting":
+            strat.state, strat.order = "open", None
+        print(f"resumed saved state: {strat.state}")
+    strat.samples = samples
+    return strat
 
 
-async def run(args: argparse.Namespace, samples: list[tuple[datetime, float]], stats: dict) -> None:
-    window = timedelta(hours=args.window)
+def save_strategy(strat: Strategy) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(strat.to_dict()))
+    tmp.replace(STATE)
+
+
+async def read_swap(client, account_id: int, symbol_id: int) -> tuple[float, float]:
+    """cTrader swap in USD per unit per night, from the symbol's pip-based rates."""
+    symbol = await client.symbols.get_by_id(account_id, symbol_id)
+    pip = 10 ** -symbol.pip_position
+    return float(symbol.swap.long) * pip, float(symbol.swap.short) * pip
+
+
+def coin_funding(trade: Trade, coin: str) -> float:
+    """Hyperliquid funding received (+) or paid (-) on the coin leg over the trade."""
+    start = int(trade.opened.timestamp() * 1000)
+    end = int(trade.closed.timestamp() * 1000)
+    records = hyperliquid.get_funding_history(coin, start, end)
+    # Positive rate: longs pay. The coin leg is long for a "long" trade.
+    return sum(-trade.sign * float(r["fundingRate"]) * trade.coin_entry for r in records)
+
+
+def trade_row(trade: Trade, params: Params, funding: float) -> dict:
+    net = trade.net(params) + funding
+    return {
+        "direction": trade.direction,
+        "opened": trade.opened.isoformat(timespec="seconds"),
+        "closed": trade.closed.isoformat(timespec="seconds"),
+        "exit_reason": trade.exit_reason,
+        "target_gap": round(trade.target_gap, 4),
+        "entry_gap": round(trade.entry_gap, 4),
+        "exit_gap": round(trade.exit_gap, 4),
+        "coin_entry": trade.coin_entry,
+        "hedge_entry": trade.hedge_entry,
+        "coin_exit": trade.coin_exit,
+        "hedge_exit": trade.hedge_exit,
+        "gross": round(trade.gross(), 4),
+        "fees": round(trade.fees(params), 4),
+        "swap": round(trade.swap(params), 4),
+        "funding": round(funding, 4),
+        "net": round(net, 4),
+    }
+
+
+class TickRecorder:
+    """Writes one row per top-of-book change to data/ticks/<pair>-<UTC date>.csv."""
+
+    def __init__(self, pair: str):
+        self.pair, self.rows, self.last = pair, [], None
+        self.flushed = time.monotonic()
+
+    def record(self, now: datetime, coin: Quote, hedge: Quote) -> None:
+        key = (coin.bid, coin.ask, hedge.bid, hedge.ask)
+        if key != self.last:
+            self.rows.append((now.isoformat(timespec="milliseconds"), *key))
+            self.last = key
+        if time.monotonic() - self.flushed >= FLUSH_EVERY_S:
+            self.flush()
+
+    def flush(self) -> None:
+        self.flushed = time.monotonic()
+        if not self.rows:
+            return
+        by_day: dict[str, list] = {}
+        for row in self.rows:
+            by_day.setdefault(row[0][:10], []).append(row)
+        TICKS.mkdir(parents=True, exist_ok=True)
+        for day, rows in by_day.items():
+            path = TICKS / f"{self.pair}-{day}.csv"
+            is_new = not path.exists()
+            with path.open("a", newline="") as f:
+                writer = csv.writer(f)
+                if is_new:
+                    writer.writerow(["timestamp", "coin_bid", "coin_ask", "hedge_bid", "hedge_ask"])
+                writer.writerows(rows)
+        self.rows = []
+
+
+def quote_from(feed: dict, now: datetime, mono: float) -> Quote | None:
+    if feed["bid"] is None:
+        return None
+    return Quote(feed["bid"], feed["ask"], now - timedelta(seconds=mono - feed["at"]))
+
+
+async def run(args: argparse.Namespace, strat: Strategy) -> None:
     async with ctrader.connect() as (client, account_id):
         symbol_id = await ctrader.find_symbol_id(client, account_id, args.ct)
+        swap_long, swap_short = await read_swap(client, account_id, symbol_id)
+        strat.params = replace(strat.params, swap_long=swap_long, swap_short=swap_short)
+        print(f"cTrader swap per unit per night: long {swap_long:+.4f}, short {swap_short:+.4f}")
+
         ct = {"bid": None, "ask": None, "at": 0.0}
 
         @client.on(SpotEvent, symbol_id=symbol_id)
@@ -151,129 +186,64 @@ async def run(args: argparse.Namespace, samples: list[tuple[datetime, float]], s
         hl = {"bid": None, "ask": None, "at": 0.0}
         async with anyio.create_task_group() as tg:
             tg.start_soon(hyperliquid_ws.stream_top_of_book, args.hl, hl)
-            await trade_loop(args, samples, stats, window, ct, hl)
+            await loop(args, strat, hl, ct)
 
 
-async def trade_loop(args: argparse.Namespace, samples: list[tuple[datetime, float]], stats: dict,
-                     window: timedelta, ct: dict, hl: dict) -> None:
-    print(f"paper trading {args.hl} vs {args.ct}: start at normal ±{args.entry:g}, "
-          f"orders wait {args.order_timeout:g}s. Ctrl+C to stop.\n")
+async def loop(args: argparse.Namespace, strat: Strategy, hl: dict, ct: dict) -> None:
+    ticks = TickRecorder(f"{args.hl}-{args.ct}".lower())
+    last_print = last_save = 0.0
+    print(f"paper trading {args.hl} vs {args.ct}, entry ±{strat.params.entry:g}. Ctrl+C to stop.\n")
+    try:
+        while True:
+            now, mono = datetime.now(timezone.utc), time.monotonic()
+            coin, hedge = quote_from(hl, now, mono), quote_from(ct, now, mono)
+            if coin is None or hedge is None:
+                if mono - last_print >= args.print_every:
+                    missing = [n for n, q in ((args.hl, coin), (args.ct, hedge)) if q is None]
+                    print(f"{now:%H:%M:%S}  waiting for first quote from {', '.join(missing)}")
+                    last_print = mono
+                await anyio.sleep(args.interval)
+                continue
 
-    state, order, trade = "flat", None, None
-    last_sample = samples[-1][0] if samples else datetime.min.replace(tzinfo=timezone.utc)
-    last_print = 0.0
+            ticks.record(now, coin, hedge)
+            events = strat.step(now, coin, hedge)
+            for ev in events:
+                append_csv(EVENTS, {"time": ev.at.isoformat(timespec="seconds"), "event": ev.name,
+                                    "detail": ev.detail})
+                print(f"  ** {ev.name}: {ev.detail}")
+                if ev.trade is not None:
+                    funding = await anyio.to_thread.run_sync(coin_funding, ev.trade, args.hl)
+                    append_csv(TRADES, trade_row(ev.trade, strat.params, funding))
+            if events or mono - last_save >= SAVE_EVERY_S:
+                save_strategy(strat)
+                last_save = mono
 
-    while True:
-        now = datetime.now(timezone.utc)
-        mono = time.monotonic()
-        stamp = now.strftime("%H:%M:%S")
-
-        stale = [name for name, q in ((args.ct, ct), (args.hl, hl))
-                 if q["bid"] is None or mono - q["at"] > STALE_AFTER_S]
-        if stale:
-            if state == "entry_pending":
-                state = "flat"
-                stats["cancelled"] += 1
-                event(now, "entry cancelled", f"no fresh price for {', '.join(stale)}")
             if mono - last_print >= args.print_every:
-                print(f"{stamp}  no fresh price for {', '.join(stale)} (market closed?), waiting [{state}]")
+                normal = strat.normal(now)
+                normal_txt = f"{normal:+.2f}" if normal is not None else "n/a"
+                print(f"{now:%H:%M:%S}  gap {coin.mid - hedge.mid:+.2f}  normal {normal_txt}  "
+                      f"[{strat.state}]  quote age {args.hl} {(now - coin.at).total_seconds():.1f}s, "
+                      f"{args.ct} {(now - hedge.at).total_seconds():.1f}s")
                 last_print = mono
             await anyio.sleep(args.interval)
-            continue
-
-        hl_bid, hl_ask = hl["bid"], hl["ask"]
-        ct_bid, ct_ask = ct["bid"], ct["ask"]
-        gap = (hl_bid + hl_ask) / 2 - (ct_bid + ct_ask) / 2
-        normal = normal_gap(samples, now, window)
-        if now - last_sample >= SAMPLE_EVERY:
-            samples.append((now, gap))
-            last_sample = now
-        if normal is None:
-            if mono - last_print >= args.print_every:
-                print(f"{stamp}  gap {gap:+.2f}  (not enough history for normal yet)")
-                last_print = mono
-            await anyio.sleep(args.interval)
-            continue
-
-        if state == "flat":
-            if entries_allowed(now) and abs(gap - normal) >= args.entry:
-                side = "sell" if gap > normal else "buy"
-                order = Order(side, hl_ask if side == "sell" else hl_bid, mono, gap)
-                state = "entry_pending"
-                stats["placed"] += 1
-                event(now, "entry order", f"{side} {args.hl} at {order.price:.2f} "
-                                          f"(gap {gap:+.2f}, normal {normal:+.2f})")
-
-        elif state == "entry_pending":
-            if order.filled_by(hl_bid, hl_ask):
-                direction = "long" if order.side == "buy" else "short"
-                ct_px = ct_bid if direction == "long" else ct_ask
-                trade = Trade(direction, iso(now), order.price, ct_px, order.signal_gap)
-                state = "open"
-                stats["filled"] += 1
-                event(now, "entry filled", f"{order.side} {args.hl} {order.price:.2f}, "
-                                           f"{'sell' if direction == 'long' else 'buy'} {args.ct} {ct_px:.2f} "
-                                           f"(gap at signal {order.signal_gap:+.2f}, at fill {trade.entry_gap:+.2f})")
-            elif abs(gap - normal) < args.entry:
-                state = "flat"
-                stats["cancelled"] += 1
-                event(now, "entry cancelled", f"gap {gap:+.2f} no longer {args.entry:g} from normal "
-                                              f"{normal:+.2f} before the order filled")
-            elif mono - order.placed > args.order_timeout:
-                state = "flat"
-                stats["missed"] += 1
-                event(now, "entry missed", f"{order.side} {args.hl} at {order.price:.2f} never traded")
-
-        elif state == "open":
-            back = gap >= normal if trade.direction == "long" else gap <= normal
-            if back:
-                side = "sell" if trade.direction == "long" else "buy"
-                order = Order(side, hl_ask if side == "sell" else hl_bid, mono, gap)
-                state = "exit_pending"
-                event(now, "exit order", f"{side} {args.hl} at {order.price:.2f}")
-
-        elif state == "exit_pending":
-            still_back = gap >= normal if trade.direction == "long" else gap <= normal
-            if order.filled_by(hl_bid, hl_ask):
-                trade.hl_exit = order.price
-                trade.ct_exit = ct_ask if trade.direction == "long" else ct_bid
-                trade.exit_signal_gap = order.signal_gap
-                trade.closed = iso(now)
-                net = trade.gross() - trade.fees()
-                append_csv(TRADES, asdict(trade) | {
-                    "entry_gap": round(trade.entry_gap, 4), "exit_gap": round(trade.exit_gap, 4),
-                    "gross": round(trade.gross(), 4), "fees": round(trade.fees(), 4), "net": round(net, 4)})
-                stats["closed"] += 1
-                stats["net"] += net
-                state = "flat"
-                event(now, "closed", f"{trade.direction}: gap {trade.entry_gap:+.2f} -> {trade.exit_gap:+.2f}, "
-                                     f"gross {trade.gross():+.2f}, fees {trade.fees():.2f}, net {net:+.2f}")
-            elif not still_back:
-                state = "open"
-                event(now, "exit cancelled", f"gap {gap:+.2f} moved away from normal {normal:+.2f}; keeping trade open")
-            elif mono - order.placed > args.order_timeout:
-                order = Order(order.side, hl_ask if order.side == "sell" else hl_bid, mono, gap)
-
-        if mono - last_print >= args.print_every:
-            print(f"{stamp}  gap {gap:+.2f}  normal {normal:+.2f}  [{state}]")
-            last_print = mono
-        await anyio.sleep(args.interval)
+    finally:
+        ticks.flush()
+        save_strategy(strat)
 
 
 def main() -> None:
     args = parse_args()
+    params = Params()
     print("loading recent history for the normal gap...")
-    samples = seed_samples(args.hl, args.ct)
-    print(f"{len(samples)} history samples loaded")
-    stats = {"placed": 0, "filled": 0, "missed": 0, "cancelled": 0, "closed": 0, "net": 0.0}
+    strat = load_strategy(params, seed_samples(args.hl, args.ct, params.window_h))
+    print(f"{len(strat.samples)} history samples loaded")
     try:
-        anyio.run(run, args, samples, stats)
+        anyio.run(run, args, strat)
     except KeyboardInterrupt:
         pass
-    print(f"\nstopped. entry orders {stats['placed']}, filled {stats['filled']}, "
-          f"missed {stats['missed']}, cancelled {stats['cancelled']}; "
-          f"closed trades {stats['closed']}, net {stats['net']:+.2f}")
-    print(f"details in {TRADES} and {EVENTS}")
+    s = strat.stats
+    print(f"\nstopped [{strat.state}]. entry orders {s['placed']}, filled {s['filled']}, "
+          f"missed {s['missed']}, cancelled {s['cancelled']}; closed {s['closed']}, net {s['net']:+.2f}")
 
 
 if __name__ == "__main__":

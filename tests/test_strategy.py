@@ -138,7 +138,7 @@ def test_stale_quote_cancels_resting_entry():
     s, t = seeded(), MON_10
     step(s, t, (4001.0, 4001.2))
     t += timedelta(seconds=1)
-    ev = s.step(t, q(4001.0, 4001.2, t), q(4000.0, 4000.1, t - timedelta(seconds=10)))
+    ev = s.step(t, q(4001.0, 4001.2, t), q(4000.0, 4000.1, t - timedelta(seconds=20)))
     assert s.state == "flat" and ev[-1].detail == "stale quotes"
 
 
