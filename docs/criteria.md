@@ -52,3 +52,10 @@ Rebalance when margin < $150, fees included. Hard fails regardless of funding:
 - Evaluated independently, unless a shared cause (shared code, platform outage, ADL, fee change).
 - Top 3 trades ≤ 50% of net; no session or weekday > 60%. Excluding a losing bucket requires a new test.
 - Uptime ≥ 95%; zero unexplained state errors or lost trades.
+
+## Clock
+
+Gold count starts at 5504dc6 (2026-11-09 21:09 UTC). Rule changes after this reset it.
+
+Adverse selection per leg: sign × (entry_gap − target_gap) on entry, sign × (exit_target − exit_gap)
+on exit; sign +1 long, −1 short. Positive is a cost. Logged as entry_slippage / exit_slippage.
