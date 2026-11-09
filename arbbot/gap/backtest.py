@@ -55,7 +55,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--stop", type=float, help="close if the gap moves this far against the trade")
     parser.add_argument("--max-hold", type=float, help="close after this many hours")
-    parser.add_argument("--funding", action="store_true", help="include hourly funding per leg")
+    parser.add_argument("--funding", action="store_true",
+                        help="include hourly funding (Hyperliquid) and nightly swap (cTrader) per leg")
+    parser.add_argument("--swap-long", type=float, default=-0.5397,
+                        help="cTrader USD per unit per night when long (XAUUSD default)")
+    parser.add_argument("--swap-short", type=float, default=0.368,
+                        help="cTrader USD per unit per night when short (XAUUSD default)")
     return parser.parse_args()
 
 
@@ -113,11 +118,28 @@ def load_funding(market: str) -> pd.Series:
     return pd.read_csv(path, parse_dates=["timestamp"], index_col="timestamp")["rate"]
 
 
-def funding_cash(trade: Trade, prices: pd.DataFrame, rates: dict[str, pd.Series]) -> float:
-    """Funding received (+) or paid (-) over the life of a trade, both legs."""
+def swap_nights(start: pd.Timestamp, end: pd.Timestamp) -> int:
+    """cTrader rollovers at 22:00 UTC in (start, end]; Wednesday counts triple, weekends none."""
+    nights = 0
+    day = start.normalize()
+    while day <= end:
+        t = day + pd.Timedelta(hours=22)
+        if start < t <= end and t.weekday() < 5:
+            nights += 3 if t.weekday() == 2 else 1
+        day += pd.Timedelta(days=1)
+    return nights
+
+
+def funding_cash(trade: Trade, prices: pd.DataFrame, rates: dict[str, pd.Series],
+                 swap_long: float, swap_short: float) -> float:
+    """Holding costs received (+) or paid (-) over the life of a trade, both legs."""
     a, b = prices.columns[:2]
     total = 0.0
     for market, sign in ((a, trade.sign_a), (b, -trade.sign_a)):
+        if market.startswith("ctrader:"):
+            per_night = swap_long if sign > 0 else swap_short
+            total += per_night * swap_nights(trade.entry_time, trade.exit_time)
+            continue
         r = rates[market]
         hours = r[(r.index > trade.entry_time) & (r.index <= trade.exit_time)]
         if hours.empty:
@@ -147,8 +169,10 @@ def main() -> None:
     out["funding"] = 0.0
     if args.funding:
         prices = df.drop(columns="gap")
-        rates = {m: load_funding(m) for m in prices.columns[:2]}
-        out["funding"] = [funding_cash(t, prices, rates) for t in trades]
+        rates = {m: load_funding(m) for m in prices.columns[:2] if not m.startswith("ctrader:")}
+        out["funding"] = [
+            funding_cash(t, prices, rates, args.swap_long, args.swap_short) for t in trades
+        ]
     out["net"] = out["gross"] - cost + out["funding"]
     out["held"] = out["exit_time"] - out["entry_time"]
 
