@@ -320,6 +320,28 @@ def test_reprice_throttled_in_time():
     assert s.order.price == pytest.approx(4001.4)
 
 
+def test_too_aggressive_order_pulled_back_at_once():
+    s = seeded()
+    t = open_long(s, MON_10)
+    t += timedelta(seconds=1)
+    step(s, t, (4000.9, 4001.1))
+    before = s.order.price  # sell coin at hedge ask + normal
+    t += timedelta(seconds=0.5)
+    step(s, t, (4000.9, 4001.1), hedge=(4000.3, 4000.4))  # hedge up 0.3: our sell is now too cheap
+    assert s.order.price == pytest.approx(before + 0.3)
+
+
+def test_less_aggressive_move_waits():
+    s = seeded()
+    t = open_long(s, MON_10)
+    t += timedelta(seconds=1)
+    step(s, t, (4000.9, 4001.1))
+    before = s.order.price
+    t += timedelta(seconds=0.5)
+    step(s, t, (4000.9, 4001.1), hedge=(3998.9, 3999.0))  # hedge down 1.1: sell could go lower
+    assert s.order.price == before
+
+
 def test_far_order_ignores_small_moves():
     s = seeded()
     t = open_long(s, MON_10)
@@ -327,11 +349,11 @@ def test_far_order_ignores_small_moves():
     step(s, t, (4000.9, 4001.1))
     before = s.order.price  # sell at ~4005.1, about 4 above the touch
     t += timedelta(seconds=3)
-    step(s, t, (4000.9, 4001.1), hedge=(4000.5, 4000.6))  # target up 0.5
+    step(s, t, (4000.9, 4001.1), hedge=(3999.5, 3999.6))  # target down 0.5, safe side
     assert s.order.price == before
     t += timedelta(seconds=3)
-    step(s, t, (4000.9, 4001.1), hedge=(4001.0, 4001.1))  # target up 1.0
-    assert s.order.price == pytest.approx(before + 1)
+    step(s, t, (4000.9, 4001.1), hedge=(3999.0, 3999.1))  # target down 1.0
+    assert s.order.price == pytest.approx(before - 1)
 
 
 def test_requests_counted():

@@ -12,8 +12,9 @@ and follows the rolling normal and hedge quote until it fills. A coin fill is he
 hedge_delay_s later at the hedge quote current at that time. Gap = coin mid - hedge mid.
 
 Repricing is throttled to stay inside Hyperliquid's request budget (one request per
-USDC traded): at most one amend per reprice_min_s, and only when the price moves a
-tick near the touch or reprice_far further out. Every place, amend (one modify) and
+USDC traded), but only in the safe direction. An order left more aggressive than its
+new target is pulled back at once; otherwise at most one amend per reprice_min_s, and
+only when the price moves a tick near the touch or reprice_far further out. Every place, amend (one modify) and
 cancel counts in stats["requests"]; coin fills add to stats["volume"] at Params.size,
 and stats["budget_peak"] keeps the worst requests - volume seen, for the buffer check.
 
@@ -316,18 +317,22 @@ class Strategy:
         self.stats["volume"] = self.stats.get("volume", 0.0) + price * self.params.size
 
     def _reprice(self, new: Order, coin: Quote, now: datetime) -> None:
-        """Amend the resting order if it moved enough and the last amend is old enough.
+        """Amend the resting order: at once if it is now too aggressive, else throttled.
 
         Keeps the original placement time for the entry timeout.
         """
         p, old = self.params, self.order
-        last = old.amended or old.placed
-        if (now - last).total_seconds() < p.reprice_min_s:
+        moved = abs(new.price - old.price)
+        if moved < p.tick - 1e-9:
             return
-        from_touch = new.price - coin.ask if new.side == "sell" else coin.bid - new.price
-        step = p.tick if from_touch <= p.reprice_near else p.reprice_far
-        if abs(new.price - old.price) < step - 1e-9:
-            return
+        too_aggressive = new.price < old.price if new.side == "buy" else new.price > old.price
+        if not too_aggressive:
+            last = old.amended or old.placed
+            if (now - last).total_seconds() < p.reprice_min_s:
+                return
+            from_touch = new.price - coin.ask if new.side == "sell" else coin.bid - new.price
+            if moved < (p.tick if from_touch <= p.reprice_near else p.reprice_far) - 1e-9:
+                return
         new.placed, new.amended = old.placed, now
         self.order = new
         self._request()
@@ -380,6 +385,7 @@ class Strategy:
         t.hedge_exit = hedge.ask if t.direction == "long" else hedge.bid
         t.exit_reason = "closure"
         self._traded(t.coin_exit)
+        self._request()  # taker order
         if self.order:
             self._request()
         self.order = None
