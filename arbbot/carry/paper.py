@@ -22,6 +22,7 @@ SPOT_MAKER = 0.0004
 PERP_MAKER = 0.00015
 LOW_MARGIN_WARNING = 0.3
 HISTORY = Path("data/paper/history.csv")
+LOG = Path("data/paper/log.csv")
 
 
 @dataclass
@@ -51,6 +52,16 @@ class Valuation:
         if self.hours <= 0:
             return 0.0
         return self.total / (self.capital + self.margin) * (24 * 365) / self.hours
+
+
+def append_row(path: Path, v: Valuation) -> None:
+    row = asdict(v) | {"yearly_return": v.yearly_return}
+    is_new = not path.exists()
+    with path.open("a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row))
+        if is_new:
+            writer.writeheader()
+        writer.writerow(row)
 
 
 def state_path(coin: str) -> Path:
@@ -149,20 +160,29 @@ def cmd_open(coin: str, capital: float, margin: float) -> None:
 
 
 def cmd_status(coin: str) -> None:
-    report(value(load_state(coin)), "open")
+    v = value(load_state(coin))
+    report(v, "open")
+    append_row(LOG, v)
+
+
+def cmd_log(coin: str) -> None:
+    if not LOG.exists():
+        raise SystemExit("no log yet: run status first")
+    rows = [r for r in csv.DictReader(LOG.open()) if r["coin"] == coin]
+    print(f"{'checked (UTC)':<18}{'hours':>7}{'hedge':>9}{'rent':>8}"
+          f"{'fees':>8}{'total':>9}{'deposit':>10}")
+    for r in rows:
+        hedge = float(r["spot_pnl"]) + float(r["short_pnl"])
+        print(f"{r['valued'][:16]:<18}{float(r['hours']):>7.1f}{hedge:>+9.2f}"
+              f"{float(r['funding']):>+8.2f}{-float(r['fees']):>+8.2f}"
+              f"{float(r['total']):>+9.2f}{float(r['margin_left']):>10.2f}")
 
 
 def cmd_close(coin: str) -> None:
     v = value(load_state(coin))
     report(v, "CLOSED")
 
-    row = asdict(v) | {"yearly_return": v.yearly_return}
-    is_new = not HISTORY.exists()
-    with HISTORY.open("a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row))
-        if is_new:
-            writer.writeheader()
-        writer.writerow(row)
+    append_row(HISTORY, v)
     state_path(coin).unlink()
     print(f"  result added to {HISTORY}")
 
@@ -176,7 +196,9 @@ def parse_args() -> argparse.Namespace:
     op.add_argument("coin")
     op.add_argument("--capital", type=float, default=1000, help="USD of spot to buy")
     op.add_argument("--margin", type=float, default=300, help="USD safety deposit on the short")
-    for name, text in (("status", "value the open paper trade"), ("close", "end it and record the result")):
+    for name, text in (("status", "value the open paper trade and add it to the log"),
+                       ("log", "show all logged status checks"),
+                       ("close", "end it and record the result")):
         sub.add_parser(name, help=text).add_argument("coin")
     return parser.parse_args()
 
@@ -187,6 +209,8 @@ def main() -> None:
         cmd_open(args.coin, args.capital, args.margin)
     elif args.command == "status":
         cmd_status(args.coin)
+    elif args.command == "log":
+        cmd_log(args.coin)
     else:
         cmd_close(args.coin)
 
