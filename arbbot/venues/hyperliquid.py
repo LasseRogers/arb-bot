@@ -114,5 +114,11 @@ def price_tick(coin: str, price: float) -> float:
     return max(significant, 10.0 ** -(6 - sz_decimals))
 
 
+def get_max_leverage(coin: str) -> int:
+    """Max leverage of a main-dex perp; maintenance margin is half the initial margin at this."""
+    universe = _post({"type": "meta"})["universe"]
+    return next(a["maxLeverage"] for a in universe if a["name"] == coin)
+
+
 if __name__ == "__main__":
     print(f"BTC mid: {get_mid_price('BTC'):,.2f}")
