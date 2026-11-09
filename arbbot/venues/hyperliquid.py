@@ -1,5 +1,6 @@
 """Minimal client for Hyperliquid's public info API."""
 
+import math
 import requests
 
 INFO_URL = "https://api.hyperliquid.xyz/info"
@@ -104,3 +105,14 @@ def get_spot_markets() -> dict[str, dict]:
 
 if __name__ == "__main__":
     print(f"BTC mid: {get_mid_price('BTC'):,.2f}")
+
+
+def price_tick(coin: str, price: float) -> float:
+    """Smallest valid price step for a main-dex perp near `price`.
+
+    Hyperliquid allows 5 significant figures and at most 6 - szDecimals decimals.
+    """
+    universe = _post({"type": "meta"})["universe"]
+    sz_decimals = next(a["szDecimals"] for a in universe if a["name"] == coin)
+    significant = 10.0 ** (math.floor(math.log10(price)) - 4)
+    return max(significant, 10.0 ** -(6 - sz_decimals))

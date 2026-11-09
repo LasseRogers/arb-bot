@@ -1,14 +1,18 @@
 """Gap strategy core: a pure state machine shared by paper trading, replay and live.
 
 No I/O. Feed it quotes with step(); it returns events, and finished trades end up in
-the events that close them.
+the events that close them. Session timing comes from a Schedule of the hedge venue.
 
 Entry and exit orders rest as post-only maker orders on the coin, priced off the
 hedge quote so a fill locks in the target gap:
   long  (gap too low):  buy coin at <= hedge_bid + normal - entry, sell hedge at bid
   short (gap too high): sell coin at >= hedge_ask + normal + entry, buy hedge at ask
-Exits target a gap of normal. A coin fill is hedged hedge_delay_s later at the hedge
-quote current at that time. Gap = coin mid - hedge mid.
+The exit rests from the moment the trade is hedged, targeting normal (less exit_offset),
+and follows the rolling normal and hedge quote until it fills. A coin fill is hedged
+hedge_delay_s later at the hedge quote current at that time. Gap = coin mid - hedge mid.
+
+Resting orders come off when quotes go stale or the hedge venue is about to close.
+Open trades are closed at the quote before a weekend or holiday closure.
 """
 
 from __future__ import annotations
@@ -18,12 +22,16 @@ import statistics
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 
-WEEKDAY_FRIDAY = 4
+from arbbot.gap.session import Schedule
+
+RESTING = ("entry_resting", "exit_resting")
+HEDGING = ("entry_hedging", "exit_hedging")
 
 
 @dataclass(frozen=True)
 class Params:
     entry: float = 3.0
+    exit_offset: float = 0.0  # take profit this far short of normal
     window_h: float = 6.0
     min_samples: int = 12
     sample_every_s: float = 300
@@ -34,7 +42,7 @@ class Params:
     coin_maker: float = 0.00015
     coin_taker: float = 0.00045
     hedge_commission: float = 30 / 1_000_000
-    swap_long: float = -0.5397  # USD per unit per night when long the hedge leg
+    swap_long: float = -0.5397  # USD per unit per rollover when long the hedge leg
     swap_short: float = 0.368
 
 
@@ -68,8 +76,11 @@ class Trade:
     closed: datetime | None = None
     coin_exit: float = math.nan
     hedge_exit: float = math.nan
+    exit_target: float = math.nan
     exit_reason: str = ""
     coin_fees: float = 0.0
+    rollovers: int = 0
+    carried: bool = False  # held through a weekend or holiday closure
 
     @property
     def sign(self) -> int:
@@ -83,15 +94,24 @@ class Trade:
     def exit_gap(self) -> float:
         return self.coin_exit - self.hedge_exit
 
+    @property
+    def entry_slippage(self) -> float:
+        """Gap given up between the coin fill and the hedge. Positive is a cost."""
+        return self.sign * (self.entry_gap - self.target_gap)
+
+    @property
+    def exit_slippage(self) -> float:
+        return self.sign * (self.exit_target - self.exit_gap)
+
     def gross(self) -> float:
-        return self.sign * (self.coin_exit - self.coin_entry) - self.sign * (self.hedge_exit - self.hedge_entry)
+        return self.sign * (self.exit_gap - self.entry_gap)
 
     def fees(self, p: Params) -> float:
         return self.coin_fees + (self.hedge_entry + self.hedge_exit) * p.hedge_commission
 
     def swap(self, p: Params) -> float:
-        per_night = p.swap_short if self.direction == "long" else p.swap_long
-        return per_night * swap_nights(self.opened, self.closed)
+        per_rollover = p.swap_short if self.direction == "long" else p.swap_long
+        return per_rollover * self.rollovers
 
     def net(self, p: Params) -> float:
         return self.gross() - self.fees(p) + self.swap(p)
@@ -105,39 +125,12 @@ class Event:
     trade: Trade | None = None
 
 
-def swap_nights(start: datetime, end: datetime) -> int:
-    """cTrader rollovers at 22:00 UTC in (start, end]; Wednesday counts triple, weekends none."""
-    nights = 0
-    day = start.replace(hour=0, minute=0, second=0, microsecond=0)
-    while day <= end:
-        t = day + timedelta(hours=22)
-        if start < t <= end and t.weekday() < 5:
-            nights += 3 if t.weekday() == 2 else 1
-        day += timedelta(days=1)
-    return nights
-
-
-def entries_allowed(now: datetime) -> bool:
-    """No new trades near the hedge venue's nightly break, on Friday evening or at weekends."""
-    if now.weekday() >= 5:
-        return False
-    minutes = now.hour * 60 + now.minute
-    if 21 * 60 + 30 <= minutes < 23 * 60 + 5:
-        return False
-    return not (now.weekday() == WEEKDAY_FRIDAY and now.hour >= 20)
-
-
-def must_flatten(now: datetime) -> bool:
-    """Close open trades before the hedge venue shuts for the weekend."""
-    return now.weekday() == WEEKDAY_FRIDAY and (now.hour, now.minute) >= (21, 30)
-
-
 def round_down(px: float, tick: float) -> float:
-    return math.floor(px / tick + 1e-9) * tick
+    return round(math.floor(px / tick + 1e-9) * tick, 10)
 
 
 def round_up(px: float, tick: float) -> float:
-    return math.ceil(px / tick - 1e-9) * tick
+    return round(math.ceil(px / tick - 1e-9) * tick, 10)
 
 
 def filled(order: Order, coin: Quote) -> bool:
@@ -148,10 +141,12 @@ def filled(order: Order, coin: Quote) -> bool:
 @dataclass
 class Strategy:
     params: Params = field(default_factory=Params)
+    schedule: Schedule | None = None  # not persisted: rebuilt from the broker on start
     state: str = "flat"  # flat, entry_resting, entry_hedging, open, exit_resting, exit_hedging
     order: Order | None = None
     trade: Trade | None = None
     hedge_due: datetime | None = None
+    last_step: datetime | None = None
     samples: list[tuple[datetime, float]] = field(default_factory=list)
     stats: dict = field(default_factory=lambda: {
         "placed": 0, "filled": 0, "missed": 0, "cancelled": 0, "closed": 0, "net": 0.0})
@@ -185,45 +180,51 @@ class Strategy:
 
     def exit_order(self, normal: float, coin: Quote, hedge: Quote, now: datetime) -> Order:
         p = self.params
+        target = normal - self.trade.sign * p.exit_offset
         if self.trade.direction == "long":  # sell coin, buy hedge back at ask
-            px = max(round_up(hedge.ask + normal, p.tick), coin.bid + p.tick)
-            return Order("sell", px, "exit", now, normal)
-        px = min(round_down(hedge.bid + normal, p.tick), coin.ask - p.tick)
-        return Order("buy", px, "exit", now, normal)
+            px = max(round_up(hedge.ask + target, p.tick), coin.bid + p.tick)
+            return Order("sell", px, "exit", now, target)
+        px = min(round_down(hedge.bid + target, p.tick), coin.ask - p.tick)
+        return Order("buy", px, "exit", now, target)
 
     # --- main loop ---------------------------------------------------------------
 
     def step(self, now: datetime, coin: Quote, hedge: Quote) -> list[Event]:
-        p = self.params
+        if self.schedule is None:
+            raise RuntimeError("Strategy.schedule must be set before step()")
         events: list[Event] = []
-        stale = ((now - coin.at).total_seconds() > p.stale_after_s
-                 or (now - hedge.at).total_seconds() > p.stale_after_s)
+        self._check_carried(now, events)
+        self.last_step = now
+        self._step(now, coin, hedge, events)
+        return events
 
-        if self.state in ("entry_hedging", "exit_hedging"):
-            if not stale and now >= self.hedge_due:
+    def _step(self, now: datetime, coin: Quote, hedge: Quote, events: list[Event]) -> None:
+        p, sched = self.params, self.schedule
+        hedge_stale = (now - hedge.at).total_seconds() > p.stale_after_s
+        stale = hedge_stale or (now - coin.at).total_seconds() > p.stale_after_s
+
+        if self.state in HEDGING:
+            if not hedge_stale and sched.is_open(now) and now >= self.hedge_due:
                 self._complete_hedge(now, hedge, events)
-            return events
+            return
 
+        if self.state in RESTING and (stale or not sched.quoting_allowed(now)):
+            self._pull_order(now, "stale quotes" if stale else "hedge venue closing", events)
         if stale:
-            if self.state == "entry_resting":
-                self._cancel_entry(now, "stale quotes", events)
-            elif self.state == "exit_resting":
-                self.state, self.order = "open", None
-                events.append(Event(now, "exit cancelled", "stale quotes; keeping trade open"))
-            return events
+            return
+
+        if self.state in ("open", "exit_resting") and sched.must_flatten(now):
+            self._flatten(now, coin, hedge, events)
+            return
 
         gap = coin.mid - hedge.mid
         normal = self.normal(now)
         self.add_sample(now, gap)
         if normal is None:
-            return events
-
-        if self.state in ("open", "exit_resting") and must_flatten(now):
-            self._flatten(now, coin, hedge, events)
-            return events
+            return
 
         if self.state == "flat":
-            if entries_allowed(now) and abs(gap - normal) >= p.entry:
+            if sched.entries_allowed(now) and abs(gap - normal) >= p.entry:
                 direction = "long" if gap < normal else "short"
                 self.order = self.entry_order(direction, normal, coin, hedge, now)
                 self.state = "entry_resting"
@@ -241,8 +242,10 @@ class Strategy:
                 self.stats["filled"] += 1
                 events.append(Event(now, "entry filled", f"{self.order.side} coin {self.order.price:.2f}"))
                 self.order = None
+            elif not sched.entries_allowed(now):
+                self._pull_order(now, "entry window closed", events)
             elif abs(gap - normal) < p.entry:
-                self._cancel_entry(now, f"gap {gap:+.2f} back within {p.entry:g} of normal {normal:+.2f}", events)
+                self._pull_order(now, f"gap {gap:+.2f} back within {p.entry:g} of normal {normal:+.2f}", events)
             elif (now - self.order.placed).total_seconds() > p.entry_timeout_s:
                 self.state, self.order = "flat", None
                 self.stats["missed"] += 1
@@ -252,25 +255,23 @@ class Strategy:
                 self.order = self._reprice(self.entry_order(direction, normal, coin, hedge, now))
 
         elif self.state == "open":
-            if self._back_at_normal(gap, normal):
+            if sched.quoting_allowed(now):
                 self.order = self.exit_order(normal, coin, hedge, now)
                 self.state = "exit_resting"
-                events.append(Event(now, "exit order", f"{self.order.side} coin at {self.order.price:.2f}"))
+                events.append(Event(now, "exit order", f"{self.order.side} coin at {self.order.price:.2f} "
+                                                       f"for gap {self.order.target_gap:+.2f}"))
 
         elif self.state == "exit_resting":
             if filled(self.order, coin):
                 self.trade.coin_exit = self.order.price
+                self.trade.exit_target = self.order.target_gap
                 self.trade.coin_fees += self.order.price * p.coin_maker
                 self.trade.exit_reason = "normal"
                 self.state, self.hedge_due = "exit_hedging", now + timedelta(seconds=p.hedge_delay_s)
                 events.append(Event(now, "exit filled", f"{self.order.side} coin {self.order.price:.2f}"))
                 self.order = None
-            elif not self._back_at_normal(gap, normal):
-                self.state, self.order = "open", None
-                events.append(Event(now, "exit cancelled", f"gap {gap:+.2f} moved away from normal {normal:+.2f}"))
             else:
                 self.order = self._reprice(self.exit_order(normal, coin, hedge, now))
-        return events
 
     # --- helpers ---------------------------------------------------------------
 
@@ -279,13 +280,21 @@ class Strategy:
         new.placed = self.order.placed
         return new
 
-    def _back_at_normal(self, gap: float, normal: float) -> bool:
-        return gap >= normal if self.trade.direction == "long" else gap <= normal
+    def _pull_order(self, now: datetime, why: str, events: list[Event]) -> None:
+        if self.state == "entry_resting":
+            self.state, self.order = "flat", None
+            self.stats["cancelled"] += 1
+            events.append(Event(now, "entry cancelled", why))
+        else:
+            self.state, self.order = "open", None
+            events.append(Event(now, "exit cancelled", f"{why}; keeping trade open"))
 
-    def _cancel_entry(self, now: datetime, why: str, events: list[Event]) -> None:
-        self.state, self.order = "flat", None
-        self.stats["cancelled"] += 1
-        events.append(Event(now, "entry cancelled", why))
+    def _check_carried(self, now: datetime, events: list[Event]) -> None:
+        if (self.trade is not None and not self.trade.carried and self.last_step is not None
+                and self.schedule.long_closure_between(self.last_step, now)):
+            self.trade.carried = True
+            events.append(Event(now, "carried over close", f"{self.trade.direction} trade held through "
+                                                           f"a weekend or holiday closure"))
 
     def _complete_hedge(self, now: datetime, hedge: Quote, events: list[Event]) -> None:
         t = self.trade
@@ -299,18 +308,21 @@ class Strategy:
         self._close(now, events)
 
     def _flatten(self, now: datetime, coin: Quote, hedge: Quote, events: list[Event]) -> None:
-        """Weekend close: both legs taken immediately at the quote."""
+        """Close before a long closure: both legs taken immediately at the quote."""
         t = self.trade
+        normal = self.normal(now)
+        t.exit_target = self.order.target_gap if self.order else (normal if normal is not None else math.nan)
         t.coin_exit = coin.bid if t.direction == "long" else coin.ask
         t.coin_fees += t.coin_exit * self.params.coin_taker
         t.hedge_exit = hedge.ask if t.direction == "long" else hedge.bid
-        t.exit_reason = "weekend"
+        t.exit_reason = "closure"
         self.order = None
         self._close(now, events)
 
     def _close(self, now: datetime, events: list[Event]) -> None:
         t, p = self.trade, self.params
         t.closed = now
+        t.rollovers = self.schedule.rollovers(t.opened, now)
         net = t.net(p)
         self.stats["closed"] += 1
         self.stats["net"] += net
@@ -334,12 +346,13 @@ class Strategy:
             "order": asdict(self.order) if self.order else None,
             "trade": asdict(self.trade) if self.trade else None,
             "hedge_due": self.hedge_due,
+            "last_step": self.last_step,
             "samples": self.samples,
             "stats": self.stats,
         })
 
     @classmethod
-    def from_dict(cls, data: dict, params: Params | None = None) -> Strategy:
+    def from_dict(cls, data: dict, params: Params | None = None, schedule: Schedule | None = None) -> Strategy:
         def dec(v):
             if isinstance(v, dict):
                 if set(v) == {"__dt__"}:
@@ -351,10 +364,12 @@ class Strategy:
         d = dec(data)
         return cls(
             params=params or Params(),
+            schedule=schedule,
             state=d["state"],
             order=Order(**d["order"]) if d["order"] else None,
             trade=Trade(**d["trade"]) if d["trade"] else None,
             hedge_due=d["hedge_due"],
+            last_step=d.get("last_step"),
             samples=[(ts, g) for ts, g in d["samples"]],
             stats=d["stats"],
         )

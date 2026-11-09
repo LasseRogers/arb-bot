@@ -2,6 +2,7 @@
 
 import json
 import time
+from collections.abc import Callable
 
 import anyio
 from websockets.asyncio.client import connect
@@ -18,10 +19,12 @@ async def _keepalive(ws) -> None:
         await ws.send(json.dumps({"method": "ping"}))
 
 
-async def stream_top_of_book(coin: str, quote: dict) -> None:
+async def stream_top_of_book(coin: str, quote: dict,
+                             on_quote: Callable[[float, float], None] | None = None) -> None:
     """Keep quote['bid'], quote['ask'] and quote['at'] (monotonic) current, forever.
 
-    Reconnects after network errors or when the server closes the connection.
+    on_quote(bid, ask) is called on every book update. Reconnects after network errors
+    or when the server closes the connection.
     """
     subscribe = json.dumps({"method": "subscribe", "subscription": {"type": "l2Book", "coin": coin}})
     while True:
@@ -39,6 +42,8 @@ async def stream_top_of_book(coin: str, quote: dict) -> None:
                             quote["bid"] = float(bids[0]["px"])
                             quote["ask"] = float(asks[0]["px"])
                             quote["at"] = time.monotonic()
+                            if on_quote is not None:
+                                on_quote(quote["bid"], quote["ask"])
                     tg.cancel_scope.cancel()
         except* (OSError, ConnectionClosed) as group:
             # anyio task groups raise exception groups; network errors just mean reconnect.
