@@ -14,6 +14,7 @@ h2==4.4.1
 hpack==4.2.0
 hyperframe==6.1.0
 idna==3.20
+iniconfig==2.3.1
 Jinja2==3.1.6
 kiwisolver==1.5.1
 MarkupSafe==3.0.4
@@ -26,10 +27,13 @@ pandas==3.1.1
 pathspec==1.1.1
 pillow==13.0.0
 platformdirs==4.14.5
+pluggy==1.7.0
 protobuf==7.36.2
 pydantic==2.14.3
 pydantic_core==2.50.4
+Pygments==2.21.0
 pyparsing==3.3.3
+pytest==9.2.0
 python-dateutil==4.0.0
 python-dotenv==1.2.4
 pytokens==0.4.1
