@@ -1,4 +1,5 @@
 import math
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -419,3 +420,37 @@ def test_volume_and_budget_peak():
     t += timedelta(seconds=1)
     step(s, t, (4000.9, 4001.1))
     assert s.stats["budget_peak"] == 1  # 2 requests against ~4001 traded
+
+
+# --- order delay (replay only; 0 in live) ----------------------------------------
+
+def delayed(seconds: float, now: datetime = MON_10) -> Strategy:
+    s = seeded(now)
+    s.params = replace(s.params, order_delay_s=seconds)
+    return s
+
+
+def test_new_order_cannot_fill_before_it_reaches_the_book():
+    s, t = delayed(1.0), MON_10
+    step(s, t, (4001.0, 4001.2))
+    price = s.order.price
+    assert not filled(s.order, q(4000.9, price, t), t + timedelta(seconds=0.5))  # still on its way
+    step(s, t + timedelta(seconds=0.5), (4001.0, 4001.2))
+    step(s, t + timedelta(seconds=1.0), (4000.9, price))  # landed; a seller arrives
+    assert s.state == "entry_hedging"
+
+
+def test_amend_leaves_the_old_price_hittable_until_it_lands():
+    s = delayed(1.0)
+    t = open_long(s, MON_10)  # open_long's own fill steps are 1 s apart, so the entry landed
+    t += timedelta(seconds=1)
+    step(s, t, (4000.9, 4001.1))
+    t += timedelta(seconds=1)
+    step(s, t, (4000.9, 4001.1))  # exit order now in the book
+    old = s.order.price
+    t += timedelta(seconds=0.5)
+    step(s, t, (4000.9, 4001.1), hedge=(4000.5, 4000.6))  # too aggressive: amend up 0.5
+    assert s.order.price == pytest.approx(old + 0.5) and s.order.price_at(t) == pytest.approx(old)
+    t += timedelta(seconds=0.5)
+    ev = step(s, t, (old, old + 0.2), hedge=(4000.5, 4000.6))  # buyer at the old price
+    assert "exit filled" in names(ev)

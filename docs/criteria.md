@@ -57,6 +57,19 @@ Before any new clock:
   stays, budgeted at taker fees. Margin < $90 and liquidation stay hard fails.
 - The 10%/yr pass is unchanged.
 
+## Gold replay
+
+Fixed before any replay result. `python -m arbbot.gap.replay {parity,ideal,latency}`.
+
+- Backtest for the capture ratio = `ideal`: every entry fills at its order price when placed,
+  hedge delay 0, exits as in paper. Capture = paper net ÷ ideal net, both before funding.
+- Parity pass: ≥ 95% of paper events matched (name, time ±1.5 s), every closed trade matched
+  (direction, open ±2 s, net before funding ±$0.10), total net within 5%. Re-synchronised
+  whenever paper goes flat. Starts without a saved seed: first window_h hours reported apart.
+- Latency: hedge 0.5 s and 2 s are judged. Informational only: hedge 0/0.25/1/5 s, order
+  change 0.25/0.5/1 s, cTrader quotes 100–300 ms late, stepping on every tick, random 0.2–1 s.
+- A code change whose defaults reproduce tests/data/golden_events.json is not a rule change.
+
 ## Carry walk-forward scan
 
 Fixed before any run. One primary configuration decides the gate; sensitivities

@@ -5,7 +5,8 @@ module only wires it to live data:
   - streams the coin from Hyperliquid and the hedge from cTrader
   - builds the hedge venue's session schedule and swap rates from cTrader, refreshed daily
   - seeds the rolling normal from recent 5-minute history
-  - records every quote update per venue, plus a daily schedule snapshot, to data/ticks/
+  - records every quote update per venue, the daily schedule and the seed samples of each
+    start to data/ticks/, so a replay sees exactly what the live run saw
   - persists strategy state to data/paper/gold_state.json, so a restart keeps open trades
   - logs events and closed trades (with Hyperliquid funding) to data/paper/
 """
@@ -68,6 +69,14 @@ def seed_samples(hl_coin: str, ct_symbol: str, window_h: float) -> list[tuple[da
     df = pd.concat([a, b], axis=1, join="inner")
     gap = df.iloc[:, 0] - df.iloc[:, 1]
     return [(ts.to_pydatetime(), float(g)) for ts, g in gap.items()]
+
+
+def save_seed(samples: list[tuple[datetime, float]], pair: str) -> None:
+    started = datetime.now(timezone.utc)
+    path = TICKS / pair / f"seed-{started:%Y-%m-%dT%H%M%S}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"started": started.isoformat(),
+                                "samples": [[ts.isoformat(), g] for ts, g in samples]}))
 
 
 def load_strategy(params: Params, samples: list[tuple[datetime, float]]) -> Strategy:
@@ -137,6 +146,9 @@ async def keep_schedule_fresh(client, account_id: int, symbol_id: int, strat: St
         strat.params = replace(strat.params, swap_long=swap_long, swap_short=swap_short)
         snapshot_schedule(schedule, pair, today)
         built = today
+        append_csv(EVENTS, {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                            "event": "schedule refreshed",
+                            "detail": f"swap_long={swap_long:.6f}, swap_short={swap_short:.6f}"})
         print(f"  schedule and swap refreshed for {today}: long {swap_long:+.4f}, short {swap_short:+.4f}")
 
 
@@ -363,7 +375,9 @@ def main() -> None:
     mid = hyperliquid.get_mid_price(args.hl)
     params = Params(tick=hyperliquid.price_tick(args.hl, mid))
     print(f"loading history for {args.hl} and {args.ct}...")
-    strat = load_strategy(params, seed_samples(args.hl, args.ct, params.window_h))
+    samples = seed_samples(args.hl, args.ct, params.window_h)
+    save_seed(samples, f"{args.hl}-{args.ct}".lower())
+    strat = load_strategy(params, samples)
     print(f"{len(strat.samples)} history samples loaded")
     try:
         anyio.run(run, args, strat)

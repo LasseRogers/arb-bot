@@ -19,6 +19,10 @@ reprice_min_s between amends and a tick near the touch, reprice_far further out.
 cancel counts in stats["requests"]; coin fills add to stats["volume"] at Params.size,
 and stats["budget_peak"] keeps the worst requests - volume seen, for the buffer check.
 
+Order changes take effect order_delay_s after they are sent (0 by default): until then
+the previous price, or nothing for a new order, is what can be hit. Replay uses it to
+model the round trip to the exchange.
+
 Resting orders come off when quotes go stale, the hedge venue is about to close, or
 the hedge moves fast (a jump, or a wide spread); no new orders until it calms down.
 Open trades are closed at the quote before a weekend or holiday closure.
@@ -57,6 +61,7 @@ class Params:
     jump_window_s: float = 3.0
     max_hedge_spread: float = 0.30
     calm_after_s: float = 10.0
+    order_delay_s: float = 0.0  # time for a place or amend to reach the book
     tick: float = 0.1
     coin_maker: float = 0.00015
     coin_taker: float = 0.00045
@@ -84,6 +89,13 @@ class Order:
     placed: datetime
     target_gap: float
     amended: datetime | None = None
+    effective_at: datetime | None = None  # when this price reaches the book
+    prev_price: float | None = None  # price in force until then; None for a new order
+
+    def price_at(self, now: datetime) -> float | None:
+        if self.effective_at is None or now >= self.effective_at:
+            return self.price
+        return self.prev_price
 
 
 @dataclass
@@ -153,9 +165,12 @@ def round_up(px: float, tick: float) -> float:
     return round(math.ceil(px / tick - 1e-9) * tick, 10)
 
 
-def filled(order: Order, coin: Quote) -> bool:
+def filled(order: Order, coin: Quote, now: datetime | None = None) -> bool:
     """Conservative: count a fill only once the opposite side trades at or through our price."""
-    return coin.ask <= order.price if order.side == "buy" else coin.bid >= order.price
+    px = order.price if now is None else order.price_at(now)
+    if px is None:
+        return False
+    return coin.ask <= px if order.side == "buy" else coin.bid >= px
 
 
 @dataclass
@@ -256,7 +271,7 @@ class Strategy:
         if self.state == "flat":
             if calm and sched.entries_allowed(now) and abs(gap - normal) >= p.entry:
                 direction = "long" if gap < normal else "short"
-                self.order = self.entry_order(direction, normal, coin, hedge, now)
+                self.order = self._sent(self.entry_order(direction, normal, coin, hedge, now), now)
                 self.state = "entry_resting"
                 self.stats["placed"] += 1
                 self._request()
@@ -265,14 +280,14 @@ class Strategy:
                                     f"{self.order.target_gap:+.2f} (gap {gap:+.2f}, normal {normal:+.2f})"))
 
         elif self.state == "entry_resting":
-            if filled(self.order, coin):
+            px = self._fill_price(self.order, coin, now)
+            if px is not None:
                 direction = "long" if self.order.side == "buy" else "short"
-                self.trade = Trade(direction, now, self.order.target_gap, self.order.price,
-                                   coin_fees=self.order.price * p.coin_maker)
-                self._traded(self.order.price)
+                self.trade = Trade(direction, now, self.order.target_gap, px, coin_fees=px * p.coin_maker)
+                self._traded(px)
                 self.state, self.hedge_due = "entry_hedging", now + timedelta(seconds=p.hedge_delay_s)
                 self.stats["filled"] += 1
-                events.append(Event(now, "entry filled", f"{self.order.side} coin {self.order.price:.2f}"))
+                events.append(Event(now, "entry filled", f"{self.order.side} coin {px:.2f}"))
                 self.order = None
             elif not sched.entries_allowed(now):
                 self._pull_order(now, "entry window closed", events)
@@ -289,26 +304,35 @@ class Strategy:
 
         elif self.state == "open":
             if calm and sched.quoting_allowed(now):
-                self.order = self.exit_order(normal, coin, hedge, now)
+                self.order = self._sent(self.exit_order(normal, coin, hedge, now), now)
                 self.state = "exit_resting"
                 self._request()
                 events.append(Event(now, "exit order", f"{self.order.side} coin at {self.order.price:.2f} "
                                                        f"for gap {self.order.target_gap:+.2f}"))
 
         elif self.state == "exit_resting":
-            if filled(self.order, coin):
-                self.trade.coin_exit = self.order.price
+            px = self._fill_price(self.order, coin, now)
+            if px is not None:
+                self.trade.coin_exit = px
                 self.trade.exit_target = self.order.target_gap
-                self.trade.coin_fees += self.order.price * p.coin_maker
+                self.trade.coin_fees += px * p.coin_maker
                 self.trade.exit_reason = "normal"
-                self._traded(self.order.price)
+                self._traded(px)
                 self.state, self.hedge_due = "exit_hedging", now + timedelta(seconds=p.hedge_delay_s)
-                events.append(Event(now, "exit filled", f"{self.order.side} coin {self.order.price:.2f}"))
+                events.append(Event(now, "exit filled", f"{self.order.side} coin {px:.2f}"))
                 self.order = None
             else:
                 self._reprice(self.exit_order(normal, coin, hedge, now), coin, now)
 
     # --- helpers ---------------------------------------------------------------
+
+    def _sent(self, order: Order, now: datetime) -> Order:
+        order.effective_at = now + timedelta(seconds=self.params.order_delay_s)
+        return order
+
+    def _fill_price(self, order: Order, coin: Quote, now: datetime) -> float | None:
+        """Price the resting order fills at this step, or None. Replay modes override this."""
+        return order.price_at(now) if filled(order, coin, now) else None
 
     def _request(self) -> None:
         st = self.stats
@@ -340,6 +364,8 @@ class Strategy:
             if moved < (p.tick if near else p.reprice_far) - 1e-9:
                 return
         new.placed, new.amended = old.placed, now
+        new.prev_price = old.price_at(now)
+        new.effective_at = now + timedelta(seconds=p.order_delay_s)
         self.order = new
         self._request()
 
