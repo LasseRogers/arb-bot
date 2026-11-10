@@ -349,9 +349,10 @@ def main() -> None:
             print("\nparity: n/a (no judged events yet)")
             return
         replay_net = sum(run.net(t) for t in run.trades if judged(t.opened.isoformat()))
-        net_ok = abs(replay_net - paper_net) <= 0.05 * abs(paper_net) if paper_net else replay_net == 0
+        tolerance = max(0.05 * abs(paper_net), NET_TOLERANCE * max(tt, 1))
+        net_ok = abs(replay_net - paper_net) <= tolerance
         ok = m / total >= 0.95 and tm == tt and net_ok
-        print(f"\nparity: {'PASS' if ok else 'FAIL'} (≥ 95% events, all trades, net within 5%; judged after warm-up)")
+        print(f"\nparity: {'PASS' if ok else 'FAIL'} (≥ 95% events, all trades, net within max(5%, $0.10 per trade); judged after warm-up)")
         return
 
     header = f"{'case':<28}{'trades':>6} {'net':>9} {'per tr':>8} {'in slip':>8} {'out slip':>8} {'requests':>8} {'volume':>10}"

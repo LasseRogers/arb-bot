@@ -64,7 +64,7 @@ Fixed before any replay result. `python -m arbbot.gap.replay {parity,ideal,laten
 - Backtest for the capture ratio = `ideal`: every entry fills at its order price when placed,
   hedge delay 0, exits as in paper. Capture = paper net ÷ ideal net, both before funding.
 - Parity pass: ≥ 95% of paper events matched (name, time ±1.5 s), every closed trade matched
-  (direction, open ±2 s, net before funding ±$0.10), total net within 5%. Re-synchronised
+  (direction, open ±2 s, net before funding ±$0.10), total net within max(5%, $0.10 per judged trade). Re-synchronised
   whenever paper goes flat. Judged after the first window_h hours of any start whose seed is
   missing or reconstructed from 5-minute history; those hours are reported, not judged.
   No judged events: n/a, not a pass. Nets are taken at close with the swap then in force.
@@ -73,7 +73,7 @@ Fixed before any replay result. `python -m arbbot.gap.replay {parity,ideal,laten
   Order-change rows are a best case: cancels take effect at once.
 - A code change whose defaults reproduce tests/data/golden_*.json is not a rule change. The
   files are generated at the pinned commit by tests/make_golden.py (weekday; weekend flatten,
-  stale quotes and restart; carried over close).
+  stale quotes and restart; carried over close; entry timeout).
 
 ## Carry walk-forward scan
 

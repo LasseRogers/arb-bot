@@ -22,6 +22,9 @@ PATHS = {
     # trade is carried over the weekend and flagged at the reopen.
     "outage": dict(start=FRI_15, steps=26_000, seed=11, shock=(17_000, -5.0), hold=(17_000, 24_000),
                    stale=(21_000, 24_000), jump_to=(24_000, SUN_REOPEN)),
+    # Monday: a gap jump into a market that then stands still, so the entry times out.
+    "missed": dict(start=datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc), steps=3_000, seed=5,
+                   shock=(100, -5.0), freeze=(100, 500)),
 }
 
 
@@ -47,12 +50,17 @@ def run(strategy_cls, quote_cls, path: str = "weekday") -> list[tuple]:
                 restored.state, restored.order = "open", None
             restored.samples = s.samples
             s = restored
-        hedge += rng.gauss(0, 0.08) + (rng.random() < 0.0005) * rng.choice((-2.0, 2.0))
+        frozen = cfg.get("freeze", (0, 0))[0] < i < cfg.get("freeze", (0, 0))[1]
+        if frozen:
+            rng.random()  # keep the random stream aligned with unfrozen steps
+        else:
+            hedge += rng.gauss(0, 0.08) + (rng.random() < 0.0005) * rng.choice((-2.0, 2.0))
         if i == cfg.get("shock", (None, 0))[0]:
             gap += cfg["shock"][1]
         held = cfg.get("hold", (0, 0))[0] <= i < cfg.get("hold", (0, 0))[1]
-        gap += (0 if held else -0.002 * (gap + 10.0)) + rng.gauss(0, 0.03 if held else 0.15)
-        spread = 0.07 if rng.random() > 0.002 else 0.45
+        if not frozen:
+            gap += (0 if held else -0.002 * (gap + 10.0)) + rng.gauss(0, 0.03 if held else 0.15)
+        spread = 0.07 if frozen or rng.random() > 0.002 else 0.45
         lo, hi = cfg.get("stale", (0, 0))
         open_ = SCHEDULE.is_open(t)
         if open_ and not lo <= i < hi:
