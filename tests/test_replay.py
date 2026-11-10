@@ -1,4 +1,5 @@
 import random
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
@@ -68,7 +69,7 @@ def test_ideal_fills_every_entry_and_beats_paper():
     placed = [e for e in ideal.events if e.name == "entry order"]
     filled = [e for e in ideal.events if e.name == "entry filled"]
     assert placed and len(filled) == len(placed)
-    assert sum(t.net(Params()) for t in ideal.trades) >= sum(t.net(Params()) for t in paper.trades)
+    assert ideal.total() >= paper.total()
 
 
 def test_restart_drops_resting_orders():
@@ -93,3 +94,34 @@ def test_params_parsed_from_start_event():
     detail = f"code abc123, params {Params(entry=3.5, window_h=6.0, min_samples=12)}"
     p = params_from(detail)
     assert p.entry == 3.5 and p.min_samples == 12 and isinstance(p.min_samples, int)
+
+
+def held_overnight() -> Tape:
+    """Gap -14 from 12:30 Monday to 10:00 Tuesday: one long trade held over the nightly close."""
+    t = np.arange(T0.timestamp(), T0.timestamp() + 24 * 3600, 2.0)
+    gap = np.where((t >= T0.timestamp() + 1800) & (t < T0.timestamp() + 22 * 3600), -14.0, -10.0)
+    hedge = 4000.0 + 0.05 * np.sin(t / 60)
+    open_ = np.array([SCHED.is_open(datetime.fromtimestamp(x, tz=timezone.utc)) for x in t])
+    coin = np.round((hedge + gap + 0.15 * np.sin(t / 30)) * 10) / 10
+    return Tape({"hyperliquid": t, "ctrader": t[open_]},
+                {"hyperliquid": coin - 0.05, "ctrader": np.round(hedge[open_] - 0.04, 2)},
+                {"hyperliquid": coin + 0.05, "ctrader": np.round(hedge[open_] + 0.04, 2)})
+
+
+def test_net_uses_the_swap_in_force_when_the_trade_closes():
+    refresh = datetime(2026, 11, 10, 0, 30, tzinfo=timezone.utc)  # after Monday's rollover
+    long_seed = [(T0 - timedelta(minutes=5 * i), -10.0) for i in range(600, 0, -1)]  # normal stays -10
+    params = Params(window_h=72)
+    run = replay(held_overnight(), [Start(T0, params, long_seed)], {"2026-11-09": SCHED},
+                 [(refresh, -99.0, 99.0)], seeds={T0: long_seed})
+    held = [t for t in run.trades if t.rollovers]
+    assert held and all(t.closed > refresh for t in held)
+    for t in held:
+        assert run.net(t) == pytest.approx(t.net(replace(params, swap_long=-99.0, swap_short=99.0)))
+        assert run.net(t) != pytest.approx(t.net(params))
+
+
+def test_unseeded_start_is_not_judged_during_warm_up():
+    assert Start(T0, Params(), None).warm_until == T0 + timedelta(hours=6)
+    assert Start(T0, Params(), SEED, reconstructed=True).warm_until == T0 + timedelta(hours=6)
+    assert Start(T0, Params(), SEED).warm_until == T0

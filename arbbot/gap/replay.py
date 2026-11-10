@@ -9,8 +9,14 @@
 
 Inputs come from the paper run: data/ticks/<pair>/ (quotes per venue, daily schedule,
 seed samples per start) and data/paper/gold_events.csv (start times and settings).
-A start without a saved seed falls back to 5-minute history, so its first window_h
-hours are reported separately. Funding is not replayed; trades compare before funding.
+A start without a saved seed falls back to 5-minute history (a reconstructed seed file
+is the same thing, kept before Hyperliquid's 5,000-candle limit drops it). Parity is
+judged after the first window_h hours of such starts; everything is still reported.
+Trade nets are taken when the trade closes, with the swap rates in force then. Funding
+is not replayed; trades compare before funding.
+
+Cancels take effect at once even with an order-change delay, so those rows are a best
+case: a pulled order can't be hit while the cancel is on its way.
 """
 
 from __future__ import annotations
@@ -44,7 +50,7 @@ COMPARED = {"entry order", "entry filled", "entry hedged", "entry cancelled", "e
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("mode", choices=["parity", "ideal", "latency"])
+    parser.add_argument("mode", choices=["parity", "ideal", "latency", "save-seed"])
     parser.add_argument("--pair", default="paxg-xauusd")
     parser.add_argument("--step", type=float, default=0.5, help="seconds between steps")
     return parser.parse_args()
@@ -57,6 +63,14 @@ class Start:
     at: datetime
     params: Params
     seed: list[tuple[datetime, float]] | None
+    reconstructed: bool = False
+
+    @property
+    def warm_until(self) -> datetime:
+        """Before this, the normal depends on a rebuilt seed; not judged."""
+        if self.seed is not None and not self.reconstructed:
+            return self.at
+        return self.at + timedelta(hours=self.params.window_h)
 
 
 @dataclass
@@ -84,13 +98,26 @@ def load_starts(pair: str) -> list[Start]:
     seeds = {}
     for path in sorted((TICKS / pair).glob("seed-*.json")):
         data = json.loads(path.read_text())
-        seeds[datetime.fromisoformat(data["started"])] = [(datetime.fromisoformat(ts), g) for ts, g in data["samples"]]
+        seeds[datetime.fromisoformat(data["started"])] = (
+            [(datetime.fromisoformat(ts), g) for ts, g in data["samples"]], data.get("reconstructed", False))
     starts = []
     for row in events[events.event == "start"].itertuples():
         at = datetime.fromisoformat(row.time)
-        seed = next((s for t, s in seeds.items() if abs((t - at).total_seconds()) < 600), None)
-        starts.append(Start(at, params_from(row.detail), seed))
+        seed, rebuilt = next((v for t, v in seeds.items() if abs((t - at).total_seconds()) < 600), (None, False))
+        starts.append(Start(at, params_from(row.detail), seed, rebuilt))
     return starts
+
+
+def save_reconstructed_seed(pair: str) -> None:
+    """Rebuild and keep the seed of every start that has none, while history still reaches it."""
+    for st in load_starts(pair):
+        if st.seed is not None:
+            continue
+        samples = fallback_seed(st.at, st.params.window_h)
+        path = TICKS / pair / f"seed-{st.at:%Y-%m-%dT%H%M%S}.json"
+        path.write_text(json.dumps({"started": st.at.isoformat(), "reconstructed": True,
+                                    "samples": [[ts.isoformat(), g] for ts, g in samples]}))
+        print(f"saved {path} ({len(samples)} samples, reconstructed from 5-minute history)")
 
 
 def load_swaps() -> list[tuple[datetime, float, float]]:
@@ -154,6 +181,13 @@ class RandomDelayStrategy(Strategy):
 class Run:
     events: list[Event] = field(default_factory=list)
     trades: list[Trade] = field(default_factory=list)
+    nets: dict[int, float] = field(default_factory=dict)  # id(trade) -> net at close
+
+    def net(self, trade: Trade) -> float:
+        return self.nets[id(trade)]
+
+    def total(self) -> float:
+        return sum(self.nets.values())
     stats: dict = field(default_factory=dict)
     forced_flat: list[datetime] = field(default_factory=list)
 
@@ -214,6 +248,7 @@ def replay(tape: Tape, starts: list[Start], schedules: dict, swaps: list, *, cls
                 run.events.append(ev)
                 if ev.trade is not None:
                     run.trades.append(ev.trade)
+                    run.nets[id(ev.trade)] = ev.trade.net(strat.params)
     run.stats = dict(strat.stats) if strat else {}
     return run
 
@@ -239,24 +274,24 @@ def match_events(paper: pd.DataFrame, events: list[Event]) -> tuple[int, int, st
     return matched, len(paper), first
 
 
-def match_trades(paper: pd.DataFrame, trades: list[Trade], params: Params) -> tuple[int, int, float, float]:
-    left = list(trades)
+def match_trades(paper: pd.DataFrame, run: Run) -> tuple[int, int, float, float]:
+    left = list(run.trades)
     matched = 0
     for row in paper.itertuples():
         opened = datetime.fromisoformat(row.opened).timestamp()
         hit = next((t for t in left if t.direction == row.direction
                     and abs(t.opened.timestamp() - opened) <= 2
-                    and abs(t.net(params) - float(row.net_before_funding)) <= NET_TOLERANCE), None)
+                    and abs(run.net(t) - float(row.net_before_funding)) <= NET_TOLERANCE), None)
         if hit:
             matched += 1
             left.remove(hit)
     return matched, len(paper), float(paper.net_before_funding.sum()) if len(paper) else 0.0, \
-        sum(t.net(params) for t in trades)
+        sum(run.net(t) for t in run.trades)
 
 
-def summary(run: Run, params: Params) -> str:
+def summary(run: Run) -> str:
     n = len(run.trades)
-    net = sum(t.net(params) for t in run.trades)
+    net = run.total()
     entry = [t.entry_slippage for t in run.trades]
     exits = [t.exit_slippage for t in run.trades if t.exit_reason != "closure"]
     mean = lambda xs: f"{np.mean(xs):+.2f}" if xs else "  n/a"
@@ -266,6 +301,9 @@ def summary(run: Run, params: Params) -> str:
 
 def main() -> None:
     args = parse_args()
+    if args.mode == "save-seed":
+        save_reconstructed_seed(args.pair)
+        return
     starts = load_starts(args.pair)
     if not starts:
         raise SystemExit(f"no start events in {EVENTS}")
@@ -282,17 +320,24 @@ def main() -> None:
         flat_times = [datetime.fromisoformat(t) + timedelta(seconds=1)
                       for t in paper[paper.event.isin(FLAT_EVENTS)].time]
         run = replay(tape, starts, schedules, swaps, step_s=args.step, resync=flat_times, seeds=seeds)
-        warm = [st.at + timedelta(hours=st.params.window_h) for st in starts if st.seed is None]
-        settled = paper[[not any(st.at <= datetime.fromisoformat(t) < w for st, w in
-                             zip([s for s in starts if s.seed is None], warm)) for t in paper.time]]
-        m, total, first = match_events(paper, run.events)
-        ms, totals, _ = match_events(settled, run.events)
-        trades = pd.read_csv(TRADES) if TRADES.exists() else pd.DataFrame(columns=["opened", "direction", "net_before_funding"])
-        tm, tt, paper_net, our_net = match_trades(trades, run.trades, params)
+
+        def judged(when: str) -> bool:
+            t = datetime.fromisoformat(when)
+            st = max((s for s in starts if s.at <= t), key=lambda s: s.at, default=starts[0])
+            return t >= st.warm_until
+
+        trades = pd.read_csv(TRADES) if TRADES.exists() else pd.DataFrame(
+            columns=["opened", "direction", "net_before_funding"])
         pct = lambda a, b: f"{a / b:.0%}" if b else "n/a"
-        print(f"events matched    {m}/{total} ({pct(m, total)}); after warm-up {ms}/{totals} ({pct(ms, totals)})")
-        print(f"trades matched    {tm}/{tt}")
-        print(f"net before funding paper {paper_net:+.2f}, replay {our_net:+.2f}")
+        m_all, total_all, _ = match_events(paper, run.events)
+        settled = paper[[judged(t) for t in paper.time]]
+        m, total, first = match_events(settled, run.events)
+        settled_trades = trades[[judged(t) for t in trades.opened]]
+        tm, tt, paper_net, our_net = match_trades(settled_trades, run)
+        print(f"events matched    {m}/{total} ({pct(m, total)}) judged; {m_all}/{total_all} "
+              f"({pct(m_all, total_all)}) including warm-up")
+        print(f"trades matched    {tm}/{tt} judged")
+        print(f"net before funding paper {paper_net:+.2f}, replay {our_net:+.2f} (replay includes warm-up trades)")
         print(f"re-synchronised   {len(run.forced_flat)} time(s)")
         print(f"first divergence  {first or 'none'}")
         if STATE.exists():
@@ -300,9 +345,13 @@ def main() -> None:
             print("\ncounter        paper    replay")
             for k in ("placed", "filled", "missed", "cancelled", "closed", "requests", "volume", "budget_peak"):
                 print(f"{k:<12} {live.get(k, 0):>8.0f} {run.stats.get(k, 0):>9.0f}")
-        net_ok = paper_net == 0 and our_net == 0 or abs(our_net - paper_net) <= 0.05 * abs(paper_net)
-        ok = total == 0 or (m / total >= 0.95 and tm == tt and net_ok)
-        print(f"\nparity: {'PASS' if ok else 'FAIL'} (≥ 95% events, all trades, net within 5%)")
+        if total == 0:
+            print("\nparity: n/a (no judged events yet)")
+            return
+        replay_net = sum(run.net(t) for t in run.trades if judged(t.opened.isoformat()))
+        net_ok = abs(replay_net - paper_net) <= 0.05 * abs(paper_net) if paper_net else replay_net == 0
+        ok = m / total >= 0.95 and tm == tt and net_ok
+        print(f"\nparity: {'PASS' if ok else 'FAIL'} (≥ 95% events, all trades, net within 5%; judged after warm-up)")
         return
 
     header = f"{'case':<28}{'trades':>6} {'net':>9} {'per tr':>8} {'in slip':>8} {'out slip':>8} {'requests':>8} {'volume':>10}"
@@ -310,10 +359,10 @@ def main() -> None:
         run = replay(tape, starts, schedules, swaps, cls=IdealStrategy, overrides={"hedge_delay_s": 0.0},
                      step_s=args.step, seeds=seeds)
         print(header)
-        print(f"{'ideal':<28}{summary(run, params)}")
+        print(f"{'ideal':<28}{summary(run)}")
         if TRADES.exists():
             paper_net = float(pd.read_csv(TRADES).net_before_funding.sum())
-            ideal = sum(t.net(params) for t in run.trades)
+            ideal = run.total()
             print(f"\ncapture ratio: paper {paper_net:+.2f} / ideal {ideal:+.2f} = "
                   f"{paper_net / ideal:.0%}" if ideal > 0 else "\ncapture ratio: n/a (ideal net ≤ 0)")
         return
@@ -329,7 +378,7 @@ def main() -> None:
         t = tape.shifted("ctrader", opts["shift"]) if "shift" in opts else tape
         run = replay(t, starts, schedules, swaps, cls=opts.get("cls", Strategy), overrides=overrides,
                      step_s=args.step, per_tick=opts.get("per_tick", False), seeds=seeds)
-        print(f"{name:<28}{summary(run, replace(params, **overrides))}", flush=True)
+        print(f"{name:<28}{summary(run)}", flush=True)
 
 
 if __name__ == "__main__":

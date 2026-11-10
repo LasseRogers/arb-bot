@@ -2,7 +2,7 @@ venv/
 .venv/
 __pycache__/
 *.pyc
-data/
+/data/
 .env
 charts/
 ctrader_api_dump.txt

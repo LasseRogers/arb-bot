@@ -1,0 +1,722 @@
+[
+[
+"2026-11-13T15:15:11+00:00",
+"entry order",
+"buy coin at 3984.15 for gap -13.00 (gap -13.03, normal -10.00)"
+],
+[
+"2026-11-13T15:15:12+00:00",
+"entry filled",
+"buy coin 3984.15"
+],
+[
+"2026-11-13T15:15:13+00:00",
+"entry hedged",
+"hedge at 3997.12, gap -12.97 (target -13.00)"
+],
+[
+"2026-11-13T15:15:14+00:00",
+"exit order",
+"sell coin at 3987.20 for gap -10.00"
+],
+[
+"2026-11-13T15:17:45+00:00",
+"exit cancelled",
+"fast market: hedge moved 2.16; keeping trade open"
+],
+[
+"2026-11-13T15:17:57+00:00",
+"exit order",
+"sell coin at 3985.40 for gap -10.00"
+],
+[
+"2026-11-13T15:21:02+00:00",
+"exit filled",
+"sell coin 3986.40"
+],
+[
+"2026-11-13T15:21:03+00:00",
+"closed",
+"long (normal): gap -12.97 -> -10.09, net +1.44"
+],
+[
+"2026-11-13T15:26:37+00:00",
+"entry order",
+"buy coin at 3983.80 for gap -13.00 (gap -13.01, normal -10.00)"
+],
+[
+"2026-11-13T15:26:41+00:00",
+"entry filled",
+"buy coin 3983.95"
+],
+[
+"2026-11-13T15:26:42+00:00",
+"entry hedged",
+"hedge at 3997.02, gap -13.07 (target -13.00)"
+],
+[
+"2026-11-13T15:26:43+00:00",
+"exit order",
+"sell coin at 3987.10 for gap -10.00"
+],
+[
+"2026-11-13T15:32:37+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T15:32:47+00:00",
+"exit order",
+"sell coin at 3987.30 for gap -10.00"
+],
+[
+"2026-11-13T15:33:06+00:00",
+"exit filled",
+"sell coin 3986.90"
+],
+[
+"2026-11-13T15:33:07+00:00",
+"closed",
+"long (normal): gap -13.07 -> -10.08, net +1.55"
+],
+[
+"2026-11-13T15:50:42+00:00",
+"entry order",
+"sell coin at 3984.30 for gap -7.00 (gap -6.99, normal -10.00)"
+],
+[
+"2026-11-13T15:50:43+00:00",
+"entry filled",
+"sell coin 3984.30"
+],
+[
+"2026-11-13T15:50:44+00:00",
+"entry hedged",
+"hedge at 3991.10, gap -6.80 (target -7.00)"
+],
+[
+"2026-11-13T15:50:45+00:00",
+"exit order",
+"buy coin at 3980.90 for gap -10.00"
+],
+[
+"2026-11-13T15:55:08+00:00",
+"exit cancelled",
+"fast market: hedge moved 2.14; keeping trade open"
+],
+[
+"2026-11-13T15:55:20+00:00",
+"exit order",
+"buy coin at 3977.90 for gap -10.00"
+],
+[
+"2026-11-13T16:01:30+00:00",
+"exit filled",
+"buy coin 3979.00"
+],
+[
+"2026-11-13T16:01:31+00:00",
+"closed",
+"short (normal): gap -6.80 -> -10.01, net +1.78"
+],
+[
+"2026-11-13T16:10:56+00:00",
+"entry order",
+"sell coin at 3983.20 for gap -7.00 (gap -7.00, normal -10.00)"
+],
+[
+"2026-11-13T16:10:57+00:00",
+"entry cancelled",
+"gap -7.22 back within 3 of normal -10.00"
+],
+[
+"2026-11-13T16:35:06+00:00",
+"entry order",
+"buy coin at 3978.55 for gap -13.00 (gap -13.05, normal -10.00)"
+],
+[
+"2026-11-13T16:35:07+00:00",
+"entry filled",
+"buy coin 3978.55"
+],
+[
+"2026-11-13T16:35:08+00:00",
+"entry hedged",
+"hedge at 3991.65, gap -13.10 (target -13.00)"
+],
+[
+"2026-11-13T16:35:09+00:00",
+"exit order",
+"sell coin at 3981.60 for gap -10.00"
+],
+[
+"2026-11-13T16:53:24+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T16:53:34+00:00",
+"exit order",
+"sell coin at 3985.60 for gap -10.00"
+],
+[
+"2026-11-13T16:55:47+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T16:55:57+00:00",
+"exit order",
+"sell coin at 3985.00 for gap -10.00"
+],
+[
+"2026-11-13T17:03:24+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T17:03:34+00:00",
+"exit order",
+"sell coin at 3985.10 for gap -10.00"
+],
+[
+"2026-11-13T17:09:50+00:00",
+"exit filled",
+"sell coin 3982.30"
+],
+[
+"2026-11-13T17:09:51+00:00",
+"closed",
+"long (normal): gap -13.10 -> -9.87, net +1.80"
+],
+[
+"2026-11-13T17:24:17+00:00",
+"entry order",
+"buy coin at 3981.70 for gap -13.00 (gap -13.01, normal -10.00)"
+],
+[
+"2026-11-13T17:24:18+00:00",
+"entry cancelled",
+"gap -12.97 back within 3 of normal -10.00"
+],
+[
+"2026-11-13T17:24:19+00:00",
+"entry order",
+"buy coin at 3981.55 for gap -13.00 (gap -13.13, normal -10.00)"
+],
+[
+"2026-11-13T17:24:20+00:00",
+"entry cancelled",
+"gap -12.95 back within 3 of normal -10.00"
+],
+[
+"2026-11-13T17:24:29+00:00",
+"entry order",
+"buy coin at 3981.50 for gap -13.00 (gap -13.01, normal -10.00)"
+],
+[
+"2026-11-13T17:24:30+00:00",
+"entry filled",
+"buy coin 3981.50"
+],
+[
+"2026-11-13T17:24:31+00:00",
+"entry hedged",
+"hedge at 3994.42, gap -12.92 (target -13.00)"
+],
+[
+"2026-11-13T17:24:32+00:00",
+"exit order",
+"sell coin at 3984.50 for gap -10.00"
+],
+[
+"2026-11-13T17:28:28+00:00",
+"exit filled",
+"sell coin 3985.00"
+],
+[
+"2026-11-13T17:28:29+00:00",
+"closed",
+"long (normal): gap -12.92 -> -10.03, net +1.46"
+],
+[
+"2026-11-13T17:45:31+00:00",
+"entry order",
+"buy coin at 3976.95 for gap -13.00 (gap -13.06, normal -10.00)"
+],
+[
+"2026-11-13T17:45:32+00:00",
+"entry filled",
+"buy coin 3976.95"
+],
+[
+"2026-11-13T17:45:33+00:00",
+"entry hedged",
+"hedge at 3989.82, gap -12.87 (target -13.00)"
+],
+[
+"2026-11-13T17:45:34+00:00",
+"exit order",
+"sell coin at 3980.00 for gap -10.00"
+],
+[
+"2026-11-13T17:51:09+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T17:51:19+00:00",
+"exit order",
+"sell coin at 3979.80 for gap -10.00"
+],
+[
+"2026-11-13T17:52:49+00:00",
+"exit filled",
+"sell coin 3978.00"
+],
+[
+"2026-11-13T17:52:50+00:00",
+"closed",
+"long (normal): gap -12.87 -> -9.98, net +1.46"
+],
+[
+"2026-11-13T17:53:56+00:00",
+"entry order",
+"sell coin at 3980.75 for gap -7.00 (gap -6.95, normal -10.00)"
+],
+[
+"2026-11-13T17:53:57+00:00",
+"entry cancelled",
+"gap -7.18 back within 3 of normal -10.00"
+],
+[
+"2026-11-13T17:55:16+00:00",
+"entry order",
+"sell coin at 3980.40 for gap -7.00 (gap -6.98, normal -10.00)"
+],
+[
+"2026-11-13T17:55:17+00:00",
+"entry cancelled",
+"gap -7.03 back within 3 of normal -10.00"
+],
+[
+"2026-11-13T18:27:31+00:00",
+"entry order",
+"sell coin at 3979.90 for gap -7.00 (gap -6.99, normal -10.00)"
+],
+[
+"2026-11-13T18:27:37+00:00",
+"entry filled",
+"sell coin 3979.75"
+],
+[
+"2026-11-13T18:27:38+00:00",
+"entry hedged",
+"hedge at 3986.83, gap -7.08 (target -7.00)"
+],
+[
+"2026-11-13T18:27:39+00:00",
+"exit order",
+"buy coin at 3976.70 for gap -10.00"
+],
+[
+"2026-11-13T18:32:55+00:00",
+"exit filled",
+"buy coin 3977.80"
+],
+[
+"2026-11-13T18:32:56+00:00",
+"closed",
+"short (normal): gap -7.08 -> -9.97, net +1.46"
+],
+[
+"2026-11-13T18:38:13+00:00",
+"entry order",
+"sell coin at 3981.55 for gap -7.00 (gap -6.95, normal -10.00)"
+],
+[
+"2026-11-13T18:38:14+00:00",
+"entry cancelled",
+"gap -7.10 back within 3 of normal -10.00"
+],
+[
+"2026-11-13T18:39:09+00:00",
+"entry order",
+"sell coin at 3981.30 for gap -7.00 (gap -6.98, normal -10.00)"
+],
+[
+"2026-11-13T18:39:13+00:00",
+"entry cancelled",
+"gap -7.14 back within 3 of normal -10.00"
+],
+[
+"2026-11-13T18:40:10+00:00",
+"entry order",
+"sell coin at 3981.10 for gap -7.00 (gap -6.98, normal -10.00)"
+],
+[
+"2026-11-13T18:40:14+00:00",
+"entry filled",
+"sell coin 3981.10"
+],
+[
+"2026-11-13T18:40:15+00:00",
+"entry hedged",
+"hedge at 3987.93, gap -6.83 (target -7.00)"
+],
+[
+"2026-11-13T18:40:16+00:00",
+"exit order",
+"buy coin at 3977.80 for gap -10.00"
+],
+[
+"2026-11-13T18:45:52+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T18:46:02+00:00",
+"exit order",
+"buy coin at 3976.50 for gap -10.00"
+],
+[
+"2026-11-13T18:50:28+00:00",
+"exit filled",
+"buy coin 3978.70"
+],
+[
+"2026-11-13T18:50:29+00:00",
+"closed",
+"short (normal): gap -6.83 -> -9.90, net +1.64"
+],
+[
+"2026-11-13T18:56:50+00:00",
+"entry order",
+"buy coin at 3976.65 for gap -13.00 (gap -13.07, normal -10.00)"
+],
+[
+"2026-11-13T18:56:51+00:00",
+"entry filled",
+"buy coin 3976.65"
+],
+[
+"2026-11-13T18:56:52+00:00",
+"entry hedged",
+"hedge at 3989.65, gap -13.00 (target -13.00)"
+],
+[
+"2026-11-13T18:56:53+00:00",
+"exit order",
+"sell coin at 3979.80 for gap -10.00"
+],
+[
+"2026-11-13T19:01:06+00:00",
+"exit cancelled",
+"fast market: hedge moved 2.21; keeping trade open"
+],
+[
+"2026-11-13T19:01:18+00:00",
+"exit order",
+"sell coin at 3982.10 for gap -10.00"
+],
+[
+"2026-11-13T19:08:46+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T19:08:56+00:00",
+"exit order",
+"sell coin at 3979.90 for gap -10.00"
+],
+[
+"2026-11-13T19:10:06+00:00",
+"exit filled",
+"sell coin 3980.30"
+],
+[
+"2026-11-13T19:10:07+00:00",
+"closed",
+"long (normal): gap -13.00 -> -9.77, net +1.80"
+],
+[
+"2026-11-13T19:15:33+00:00",
+"entry order",
+"buy coin at 3976.65 for gap -13.00 (gap -13.14, normal -10.00)"
+],
+[
+"2026-11-13T19:15:34+00:00",
+"entry filled",
+"buy coin 3976.65"
+],
+[
+"2026-11-13T19:15:35+00:00",
+"entry hedged",
+"hedge at 3989.90, gap -13.25 (target -13.00)"
+],
+[
+"2026-11-13T19:15:36+00:00",
+"exit order",
+"sell coin at 3980.00 for gap -10.00"
+],
+[
+"2026-11-13T19:19:01+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T19:19:11+00:00",
+"exit order",
+"sell coin at 3979.20 for gap -10.00"
+],
+[
+"2026-11-13T19:21:00+00:00",
+"exit filled",
+"sell coin 3979.00"
+],
+[
+"2026-11-13T19:21:01+00:00",
+"closed",
+"long (normal): gap -13.25 -> -9.87, net +1.95"
+],
+[
+"2026-11-13T19:23:30+00:00",
+"entry order",
+"buy coin at 3976.00 for gap -13.00 (gap -13.03, normal -10.00)"
+],
+[
+"2026-11-13T19:23:31+00:00",
+"entry filled",
+"buy coin 3976.00"
+],
+[
+"2026-11-13T19:23:32+00:00",
+"entry hedged",
+"hedge at 3989.04, gap -13.04 (target -13.00)"
+],
+[
+"2026-11-13T19:23:33+00:00",
+"exit order",
+"sell coin at 3979.20 for gap -10.00"
+],
+[
+"2026-11-13T19:32:13+00:00",
+"exit filled",
+"sell coin 3981.70"
+],
+[
+"2026-11-13T19:32:14+00:00",
+"closed",
+"long (normal): gap -13.04 -> -9.92, net +1.69"
+],
+[
+"2026-11-13T19:43:20+00:00",
+"entry order",
+"buy coin at 3976.15 for gap -13.00 (gap -17.38, normal -10.00)"
+],
+[
+"2026-11-13T19:43:26+00:00",
+"entry filled",
+"buy coin 3976.25"
+],
+[
+"2026-11-13T19:43:27+00:00",
+"entry hedged",
+"hedge at 3993.53, gap -17.28 (target -13.00)"
+],
+[
+"2026-11-13T19:43:28+00:00",
+"exit order",
+"sell coin at 3983.60 for gap -10.00"
+],
+[
+"2026-11-13T19:50:18+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T19:50:33+00:00",
+"exit order",
+"sell coin at 3982.50 for gap -10.00"
+],
+[
+"2026-11-13T19:50:35+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T19:50:45+00:00",
+"exit order",
+"sell coin at 3982.60 for gap -10.00"
+],
+[
+"2026-11-13T19:52:44+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T19:52:54+00:00",
+"exit order",
+"sell coin at 3982.80 for gap -10.00"
+],
+[
+"2026-11-13T19:53:09+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T19:53:19+00:00",
+"exit order",
+"sell coin at 3982.60 for gap -10.00"
+],
+[
+"2026-11-13T20:07:16+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T20:07:26+00:00",
+"exit order",
+"sell coin at 3981.90 for gap -10.03"
+],
+[
+"2026-11-13T20:17:09+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T20:17:19+00:00",
+"exit order",
+"sell coin at 3982.70 for gap -10.11"
+],
+[
+"2026-11-13T20:23:12+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-13T20:23:22+00:00",
+"exit order",
+"sell coin at 3983.60 for gap -10.15"
+],
+[
+"2026-11-13T20:47:52+00:00",
+"exit cancelled",
+"fast market: hedge moved 2.11; keeping trade open"
+],
+[
+"2026-11-13T20:48:04+00:00",
+"exit order",
+"sell coin at 3987.60 for gap -10.46"
+],
+[
+"2026-11-13T20:50:15+00:00",
+"exit cancelled",
+"stale quotes; keeping trade open"
+],
+[
+"2026-11-15T23:05:00+00:00",
+"carried over close",
+"long trade held through a weekend or holiday closure"
+],
+[
+"2026-11-15T23:05:00+00:00",
+"exit order",
+"sell coin at 3987.60 for gap -10.00"
+],
+[
+"2026-11-15T23:08:13+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-15T23:08:23+00:00",
+"exit order",
+"sell coin at 3987.40 for gap -10.00"
+],
+[
+"2026-11-15T23:13:36+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-15T23:13:46+00:00",
+"exit order",
+"sell coin at 3986.00 for gap -10.00"
+],
+[
+"2026-11-15T23:14:34+00:00",
+"exit filled",
+"sell coin 3986.30"
+],
+[
+"2026-11-15T23:14:35+00:00",
+"closed",
+"long (normal): gap -17.28 -> -9.92, net +6.29"
+],
+[
+"2026-11-15T23:32:22+00:00",
+"entry order",
+"sell coin at 3989.15 for gap -7.00 (gap -6.78, normal -10.00)"
+],
+[
+"2026-11-15T23:32:23+00:00",
+"entry filled",
+"sell coin 3989.15"
+],
+[
+"2026-11-15T23:32:24+00:00",
+"entry hedged",
+"hedge at 3995.83, gap -6.68 (target -7.00)"
+],
+[
+"2026-11-15T23:32:25+00:00",
+"exit order",
+"buy coin at 3985.70 for gap -10.00"
+],
+[
+"2026-11-15T23:33:05+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-15T23:33:15+00:00",
+"exit order",
+"buy coin at 3985.10 for gap -10.00"
+],
+[
+"2026-11-15T23:34:09+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-15T23:34:19+00:00",
+"exit order",
+"buy coin at 3984.30 for gap -10.00"
+],
+[
+"2026-11-15T23:35:37+00:00",
+"exit cancelled",
+"fast market: hedge moved 2.02; keeping trade open"
+],
+[
+"2026-11-15T23:35:49+00:00",
+"exit order",
+"buy coin at 3982.20 for gap -10.00"
+],
+[
+"2026-11-15T23:36:25+00:00",
+"exit cancelled",
+"fast market: hedge spread 0.45; keeping trade open"
+],
+[
+"2026-11-15T23:36:35+00:00",
+"exit order",
+"buy coin at 3982.80 for gap -10.00"
+],
+[
+"stats",
+"[('budget_peak', 1.0), ('cancelled', 7), ('closed', 12), ('filled', 13), ('missed', 0), ('net', 24.303455399999876), ('placed', 20), ('requests', 442), ('volume', 99526.34999999999)]",
+""
+]
+]
