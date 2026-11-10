@@ -104,7 +104,9 @@ runs of `python -m arbbot.carry.walkforward`.
 
 ## Clock
 
-Gold count starts at bfb24c2 (2026-11-09 21:22 UTC), clean paper files, size 1 oz (hedge minimum).
+Gold count starts at 6893b75 (2026-11-10 14:28 UTC), clean paper files, size 1 oz (hedge minimum).
+Hedge spread limit $0.30 checked on 16.6 h of ticks: above it 2.3% of the time, only 21–22 UTC
+around the nightly break, when entries and quoting are already off.
 Rule changes after this reset it. Reprice throttle and fast-move guard are rules: `Params` at that commit.
 
 ## Definitions
