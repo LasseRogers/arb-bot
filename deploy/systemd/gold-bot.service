@@ -4,11 +4,11 @@ StartLimitIntervalSec=900
 StartLimitBurst=10
 
 [Service]
-WorkingDirectory=%h/projects/arb-bot
-ExecStart=%h/projects/arb-bot/venv/bin/python -m arbbot.gap.live --print-every 30
+WorkingDirectory=%h/arb-bot
+ExecStart=%h/arb-bot/venv/bin/python -m arbbot.gap.live --print-every 30
 Environment=PYTHONUNBUFFERED=1
 # This Pi keeps no user journal: status lines go to a file.
-StandardOutput=append:%h/projects/arb-bot/data/paper/live.log
+StandardOutput=append:%h/arb-bot/data/paper/live.log
 StandardError=inherit
 # Stop like Ctrl+C, so the bot saves its state and flushes recorded quotes.
 KillSignal=SIGINT
