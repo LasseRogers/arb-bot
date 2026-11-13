@@ -1,0 +1,7 @@
+[Unit]
+Description=arb-bot gold: daily Telegram report
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/arb-bot
+ExecStart=%h/projects/arb-bot/venv/bin/python -m arbbot.gap.report daily

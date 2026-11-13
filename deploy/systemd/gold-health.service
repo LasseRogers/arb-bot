@@ -1,0 +1,7 @@
+[Unit]
+Description=arb-bot gold: health check, Telegram alert on problems
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/arb-bot
+ExecStart=%h/projects/arb-bot/venv/bin/python -m arbbot.gap.report health
