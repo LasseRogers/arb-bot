@@ -65,3 +65,15 @@ def test_stale_ctrader_only_matters_while_gold_is_open(run_dir):
     saturday = datetime(2026, 11, 14, 12, 0, tzinfo=timezone.utc)
     assert not any("cTrader" in p for p in report.problems(saturday))
     assert any("cTrader" in p for p in report.problems(NOW + timedelta(minutes=30)))
+
+
+@pytest.mark.parametrize("cmdline, match", [
+    ("python -m arbbot.gap.live", True),
+    ("/home/lasr/projects/arb-bot/venv/bin/python -m arbbot.gap.live", True),
+    ("/usr/bin/python3.13 -m arbbot.gap.live", True),
+    ("tmux new-session -d -s gold -c /x source venv/bin/activate && python -m arbbot.gap.live; exec bash", False),
+    ("python -m arbbot.gap.report health", False),
+])
+def test_bot_pattern(cmdline, match):
+    import re
+    assert bool(re.search(report.BOT_PATTERN, cmdline)) is match

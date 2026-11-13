@@ -56,8 +56,11 @@ def send(text: str, dry_run: bool = False) -> None:
 
 # --- what the files say ------------------------------------------------------------
 
+BOT_PATTERN = r"(^|/)python[0-9.]* -m arbbot\.gap\.live"  # by hand or as a service, not tmux's own line
+
+
 def bot_running() -> bool:
-    return subprocess.run(["pgrep", "-f", "^python -m arbbot.gap.live"], capture_output=True).returncode == 0
+    return subprocess.run(["pgrep", "-f", BOT_PATTERN], capture_output=True).returncode == 0
 
 
 def last_quotes() -> dict[str, datetime]:
