@@ -119,6 +119,8 @@ runs of `python -m arbbot.carry.walkforward`.
 - Evaluated independently, unless a shared cause (shared code, platform outage, ADL, fee change).
 - Top 3 trades ≤ 50% of net; no session or weekday > 60%. Excluding a losing bucket requires a new test.
 - Uptime ≥ 95%; zero unexplained state errors or lost trades.
+  Uptime = share of the run with no gap over 1 min in Hyperliquid ticks (24/7),
+  computed by scripts/uptime.py. Starts and downtime: docs/run_log.md.
 
 ## Clock
 
