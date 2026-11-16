@@ -1,7 +1,7 @@
 [Unit]
 Description=arb-bot gold: paper trading PAXG vs XAUUSD
-StartLimitIntervalSec=900
-StartLimitBurst=10
+# Never give up: venue outages are retried inside the bot, anything else every minute.
+StartLimitIntervalSec=0
 
 [Service]
 WorkingDirectory=%h/arb-bot
@@ -14,7 +14,7 @@ StandardError=inherit
 KillSignal=SIGINT
 TimeoutStopSec=30
 Restart=always
-RestartSec=30
+RestartSec=60
 
 [Install]
 WantedBy=default.target

@@ -28,6 +28,7 @@ from ctrader_api_client.events.types import SpotEvent
 from arbbot.gap import history
 from arbbot.gap.session import Schedule, from_trading_hours
 from arbbot.gap.strategy import Params, Quote, Strategy, Trade
+from arbbot.retry import until_ok
 from arbbot.venues import ctrader, hyperliquid, hyperliquid_ws
 
 PAPER = Path("data/paper")
@@ -372,10 +373,10 @@ async def loop(args: argparse.Namespace, strat: Strategy, hl: dict, ct: dict, ti
 def main() -> None:
     args = parse_args()
     backfill_funding(args.hl)
-    mid = hyperliquid.get_mid_price(args.hl)
-    params = Params(tick=hyperliquid.price_tick(args.hl, mid))
+    mid = until_ok("Hyperliquid price", hyperliquid.get_mid_price, args.hl)
+    params = Params(tick=until_ok("Hyperliquid tick size", hyperliquid.price_tick, args.hl, mid))
     print(f"loading history for {args.hl} and {args.ct}...")
-    samples = seed_samples(args.hl, args.ct, params.window_h)
+    samples = until_ok("history", seed_samples, args.hl, args.ct, params.window_h)
     save_seed(samples, f"{args.hl}-{args.ct}".lower())
     strat = load_strategy(params, samples)
     print(f"{len(strat.samples)} history samples loaded")
