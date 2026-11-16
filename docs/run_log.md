@@ -12,6 +12,8 @@ Pinned at 6893b75, 2026-11-10 14:28 UTC. Every code version below reproduces the
 | 2026-11-13 11:20 | a059dfd | Pi | deliberate `kill -9`, crash restart test |
 | 2026-11-13 11:21 | f4a73a4 | Pi | status lines to `data/paper/live.log` |
 | 2026-11-13 12:26 | 2dcf025 | Pi | repo moved to `~/arb-bot`, venv rebuilt |
+| 2026-11-14 08:38 | 2dcf025 | Pi | service restart after a crash: Hyperliquid 502 on reconnect, then startup failures until it recovered |
+| 2026-11-16 07:22 | 428c890 | Pi | outage handling: reconnect on any stream error, startup retries |
 
 ## Downtime
 
@@ -24,6 +26,7 @@ From `scripts/uptime.py`, as of 2026-11-13 12:12 UTC:
 | 2026-11-13 09:57 → 10:11 | 14 | laptop reboot, move to the Pi |
 | 2026-11-13 11:17 → 11:18 | 1 | switch to the service |
 | 2026-11-13 12:19 → 12:26 | 7 | repo moved to `~/arb-bot` |
+| 2026-11-14 08:34 → 08:38 | 4 | Hyperliquid outage, crash and restart (market closed) |
 
 7.7 h of 69.7 h, 88.9%. Allowance at 3 weeks is 25.2 h.
 
