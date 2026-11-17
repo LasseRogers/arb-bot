@@ -125,3 +125,16 @@ def test_unseeded_start_is_not_judged_during_warm_up():
     assert Start(T0, Params(), None).warm_until == T0 + timedelta(hours=6)
     assert Start(T0, Params(), SEED, reconstructed=True).warm_until == T0 + timedelta(hours=6)
     assert Start(T0, Params(), SEED).warm_until == T0
+
+
+def test_load_tape_reads_epoch_seconds(tmp_path, monkeypatch):
+    from arbbot.gap import replay as rp
+    monkeypatch.setattr(rp, "TICKS", tmp_path)
+    (tmp_path / "pair").mkdir()
+    (tmp_path / "pair" / "2026-11-10.csv").write_text(
+        "timestamp,venue,bid,ask\n"
+        "2026-11-10T14:28:34.123+00:00,hyperliquid,4000.0,4000.1\n"
+        "2026-11-10T14:28:35.500+00:00,ctrader,4010.0,4010.1\n")
+    tape = rp.load_tape("pair")
+    assert tape.t["hyperliquid"][0] == pytest.approx(datetime(2026, 11, 10, 14, 28, 34, 123000, tzinfo=timezone.utc).timestamp())
+    assert tape.t["ctrader"][0] == pytest.approx(T0.replace(day=10, hour=14, minute=28, second=35, microsecond=500000).timestamp())

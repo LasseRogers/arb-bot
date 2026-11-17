@@ -132,7 +132,9 @@ def load_swaps() -> list[tuple[datetime, float, float]]:
 def load_tape(pair: str) -> Tape:
     frames = [pd.read_csv(p) for p in sorted((TICKS / pair).glob("????-??-??.csv"))]
     df = pd.concat(frames)
-    df["t"] = pd.to_datetime(df.timestamp, utc=True, format="ISO8601").astype("int64") / 1e9
+    # Epoch seconds without assuming a resolution: pandas 3 parses to microseconds, 2 to nanoseconds.
+    ts = pd.to_datetime(df.timestamp, utc=True, format="ISO8601")
+    df["t"] = (ts - pd.Timestamp(0, tz="UTC")) / pd.Timedelta(seconds=1)
     df = df.sort_values("t", kind="stable")
     t, bid, ask = {}, {}, {}
     for venue, g in df.groupby("venue"):
