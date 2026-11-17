@@ -59,19 +59,6 @@ Before any new clock:
 
 ## Gold result
 
-Fail, 2026-11-17 (b5db449). Count stopped after 6 trades; the Pi keeps recording ticks.
-
-- Drawdown $20.18 > $20. A pass needs ~$1.60/trade on the remaining 44, above a perfect
-  trade (~$1.56: $3 entry less ~$1.44 fees at ~$4,000 gold).
-- Ideal replay, same 7 days: 27 trades, +$0.32/trade, under the $0.50 fail line with perfect
-  fills. Normal replay placed 636 entry orders vs paper's 553 (+15%): same signals.
-- Paper −$3.36/trade, capture −232%. Adverse selection: the signals that reverted quickly
-  never filled; the 6 that filled kept moving, and the 6-hour median caught up to the gap.
-- Parity failed (741/1174 events, 1/5 trades), on step timing against the Pi. Not fixed;
-  it matters only if gold continues.
-
-## Gold result
-
 Fail, 2026-11-17 (b5db449). Count stopped after 6 trades.
 
 - Drawdown $20.18 > $20. A pass needs ~$1.60/trade on the remaining 44, above a perfect
